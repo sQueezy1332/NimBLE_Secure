@@ -132,8 +132,7 @@ void parse_adv_data(const uint8_t* const & data, uint8_t data_len) {
     //DEBUG("Raw Data: "); for (byte i = data_len; i--; ) { DEBUGF("%02X ", data[i]); }
     DEBUGF("Data length: \t%u\n", data_len);
     for (byte i = 0, len, type; i < data_len;) {
-        if((len = data[i]) > 2) { DEBUG("Len: "); DEBUG(len); DEBUG('\t');}
-        type = data[++i]; DEBUG("Type: "); DEBUGF("%02X", type); 
+        if((len = data[i]) > 2) { DEBUG("Len: "); DEBUG(len); DEBUG('\t');} type = data[++i]; DEBUG("Type: "); DEBUGF("%02X", type); 
         if(type == COMPLETE_NAME || type == SHORT_NAME) { DEBUG("\tName: "); for(size_t end = i++ + len;i < end; i++) DEBUG((char)data[i]); } 
         else { DEBUG(" { "); for(size_t end = i++ + len;i < end; i++) { DEBUGF("%02X ", data[i]); } DEBUG('}'); } DEBUG(len > 2 ? '\n' : ' ');  
     }
@@ -151,7 +150,7 @@ void print_event_report(const ble_gap_ext_disc_desc & disc) {
     DEBUG("[DEVICE]: \t"); print_addr(disc.addr.val);
     DEBUGF(" (%u)\nAD Event Type:\t%u\nRSSI:\t\t%i\n", disc.addr.type, disc.props, disc.rssi);
     if (disc.props & BLE_HCI_ADV_LEGACY_MASK) { DEBUGF("Legacy event: \t%u\n", disc.legacy_event_type); } //BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND; //3
-    else { if(disc.tx_power != 127) {DEBUGF("Tx Pwr: \t%i\n", disc.tx_power);}DEBUGF("Prim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\n", disc.prim_phy, disc.sec_phy, disc.sid); }
+    else { if(disc.tx_power != 127) {DEBUGF("Tx Power: \t%i\n", disc.tx_power);}DEBUGF("Prim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\n", disc.prim_phy, disc.sec_phy, disc.sid); }
     if(disc.props & BLE_HCI_ADV_DIRECT_MASK) { DEBUG("Direct address: \t"); print_addr(disc.direct_addr.val); }
 	if (disc.length_data) { parse_adv_data(disc.data, disc.length_data); } DEBUGLN('\n');
 }
