@@ -1,0 +1,102 @@
+{
+  "esp32_def": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "sdkconfigDefaults": ["sdkconfig.defaults"
+      ]
+    },
+    "env": {
+      "ARDUINO_SKIP_TICK_CHECK": "true"
+    },
+    "idfTarget": "esp32c3",
+    "flashBaudRate": "921600",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": -1,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  },
+  "esp32_def_DEBUG": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "sdkconfigDefaults": [
+      ]
+    },
+    "env": {
+      "ARDUINO_SKIP_TICK_CHECK": "true"
+    },
+    "idfTarget": "esp32",
+    "flashBaudRate": "921600",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": -1,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  },
+  "esp32c3_def": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "sdkconfigDefaults": [
+      ]
+    },
+    "env": {
+      "ARDUINO_SKIP_TICK_CHECK": "true"
+    },
+    "idfTarget": "esp32c3",
+    "flashBaudRate": "921600",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": -1,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  },
+  "esp32c3_def_DEBUG": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "sdkconfigDefaults": [
+      ]
+    },
+    "env": {
+      "ARDUINO_SKIP_TICK_CHECK": "true"
+    },
+    "idfTarget": "esp32c3",
+    "flashBaudRate": "921600",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": -1,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  }
+}
