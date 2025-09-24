@@ -185,7 +185,7 @@ void adv_init(void) {
 void periodic_sync_scan() {
     uint8_t own_addr_type;
     __unused ble_gap_disc_params disc_params = { .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0, .passive = 1, .filter_duplicates = 0, .disable_observer_mode = 0};
-    __unused ble_gap_ext_disc_params ext_params = { .itvl = 0, .window = 0, .passive = 0, .disable_observer_mode = 0 };
+    __unused ble_gap_ext_disc_params ext_params = { .itvl = 0, .window = 0, .passive = 1, .disable_observer_mode = 0 };
     /* Figure out address to use while advertising (no privacy for now) */
     ESP_RETURN_VOID_ON_ERROR(ble_hs_id_infer_auto(0, &own_addr_type), TAG, "determining address type");
         
