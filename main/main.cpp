@@ -1,8 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
 #include "main.h"
 
 extern "C" void app_main() {
@@ -20,7 +15,7 @@ extern "C" void app_main() {
 		[](TimerHandle_t xTimer) { digitalWrite(PIN_LED_D4, 0); sensor_state = 0;}, &xTimerPatchBuffer);
     xTaskCreate(nimble_host_task, "NimBLE Host", 4*1024, NULL, 5, NULL);
     xTaskCreate(heart_rate_task, "Heart Rate", 2*1024, NULL, 5, NULL);
-    auto res = analogReadMilliVolts(0); ESP_LOGD(TAG, "%lu",res);
+    //auto res = analogReadMilliVolts(0); ESP_LOGD(TAG, "%lu",res);
 }
 
 static void nimble_host_config_init() {
@@ -126,8 +121,11 @@ void get_task_list(String& str) {
     reinterpret_cast<uint32_t*>(&str)[2] = num;
 }
 
+void print_addr(const uint8_t* const & addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (i /* < 5 */) DEBUG(':'); else break; }}
+
 void parse_adv_data(const uint8_t* const & data, uint8_t data_len) {
     //DEBUG("Raw Data: "); for (byte i = data_len; i--; ) { DEBUGF("%02X ", data[i]); }
+    DEBUGF("Data length: \t%u\n", data_len);
     for (byte i = 0, len, type; i < data_len;) {
         if((len = data[i]) > 2) { DEBUG("Len: "); DEBUG(len); DEBUG('\t');}
         type = data[++i]; DEBUG("Type: "); DEBUGF("%02X", type); 
@@ -138,18 +136,20 @@ void parse_adv_data(const uint8_t* const & data, uint8_t data_len) {
 
 void print_event_report(const ble_gap_disc_desc & disc) {
 #ifdef BLE_DEBUG
-    DEBUG("[DEVICE]: \t"); for (byte i = 5;;i--) { DEBUGF("%02X", disc.addr.val[i]); if (i /* < 5 */) DEBUG(':'); else break; }
-    DEBUGF(" (%u)\nAD Event Type:\t%u\nRSSI:\t\t%i\nData length: \t%u\n", disc.addr.type, disc.event_type, disc.rssi, disc.length_data);
+    DEBUG("[DEVICE]: \t"); print_addr(disc.addr.val); //BLE_HCI_ADV_RPT_EVTYPE_ADV_IND;//0
+    DEBUGF(" (%u)\nAD Event Type:\t%u\nRSSI:\t\t%i\n", disc.addr.type, disc.event_type, disc.rssi);
+    if(disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND) { DEBUG("Direct address: \t"); print_addr(disc.direct_addr.val); }
 	if (disc.length_data) { parse_adv_data(disc.data, disc.length_data); } DEBUGLN('\n');
 #endif
 }
 
 void print_event_report(const ble_gap_ext_disc_desc & disc) {
 #ifdef BLE_DEBUG  
-    DEBUG("[DEVICE]: \t"); for (byte i = 5;;i--) { DEBUGF("%02X", disc.addr.val[i]); if (i/*  < 5 */) DEBUG(':'); else break; }
-    DEBUGF(" (%u)\nAD Event Type:\t%u\nTx Pwr: \t%i\nRSSI:\t\t%i\nPrim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\nData length: \t%u\n",
-    disc.addr.type, disc.props, disc.tx_power, disc.rssi, disc.prim_phy, disc.sec_phy, disc.sid, disc.length_data);
-    if (disc.props & BLE_HCI_ADV_LEGACY_MASK) { DEBUGF("Legacy event \t%u\n", disc.legacy_event_type); } //BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND; //3
+    DEBUG("[DEVICE]: \t"); print_addr(disc.addr.val);
+    DEBUGF(" (%u)\nAD Event Type:\t%u\nRSSI:\t\t%i\n", disc.addr.type, disc.props, disc.rssi);
+    if (disc.props & BLE_HCI_ADV_LEGACY_MASK) { DEBUGF("Legacy event: \t%u\n", disc.legacy_event_type); } //BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND; //3
+    else { if(disc.tx_power != 127) {DEBUGF("Tx Pwr: \t%i\n", disc.tx_power);}DEBUGF("Prim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\n", disc.prim_phy, disc.sec_phy, disc.sid); }
+    if(disc.props & BLE_HCI_ADV_DIRECT_MASK) { DEBUG("Direct address: \t"); print_addr(disc.direct_addr.val); }
 	if (disc.length_data) { parse_adv_data(disc.data, disc.length_data); } DEBUGLN('\n');
 #endif
 }
