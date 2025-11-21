@@ -34,7 +34,7 @@ typedef struct { byte patch , updated;  uint16_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY,  MAIN, RESTART, } action;
 
-StackType_t xMainStack[4*1024] , xHostStack[NIMBLE_HS_STACK_SIZE]; //static_assert(configTIMER_TASK_STACK_DEPTH > 3000);
+StackType_t xMainStack[4*1024] , xHostStack[NIMBLE_HS_STACK_SIZE];
 StaticTask_t xMainTaskBuffer , xHostTaskBuffer;
 TaskHandle_t main_handle, ble_handle;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
@@ -192,3 +192,4 @@ void vApplicationIdleHook(void) {
         if(prev_state != val) { digitalWrite(PIN_RELAY, prev_state = val); }
     }
 }
+
