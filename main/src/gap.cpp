@@ -19,7 +19,6 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg);
 /* Private variables */
 static uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
 __unused static uint8_t addr_val[6] = {};
-__unused static uint8_t esp_uri[] = {BLE_GAP_URI_PREFIX_HTTPS, '/', '/', 'e', 's', 'p', 'r', 'e', 's', 's', 'i', 'f', '.', 'c', 'o', 'm'};
 
 /*
  * NimBLE applies an event-driven model to keep GAP service going
