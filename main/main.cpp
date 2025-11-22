@@ -1,37 +1,38 @@
 #include "main.h"
 
 extern "C" void app_main() {
-    main_init();
-    ESP_LOGI(TAG, "Compiled: " __DATE__ "\t" __TIME__); DEBUGLN();
-    pinMode(12, OUTPUT);
+    main_init(); DEBUGLN(__TIMESTAMP__);
+    ESP_LOGI(TAG, "Compiled: " __DATE__ "\t" __TIME__); 
+    //read_noinit();  //0x253D7465 == crc8 //609862 //570586
+    //ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());nvs_test();ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());
 #ifdef DEBUG_ENABLE
-    auto heart = esp_timer_init([](void*){ gio::toggle(12);}); esp_timer_start_periodic(heart, 1000*1000);
-    //generate_salt(); delay(1);
+    //pinMode(12, OUTPUT);
+    //auto heart = esp_timer_init([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, 1000*1000);
     //led_init();
     //Serial.onReceive(uart_cb); //Serial.setRxTimeout(2);
 #endif
-#ifdef FACTORY_FIRMWARE
+#ifdef CONFIG_FACTORY_FIRMWARE
     ESP_LOGI(TAG, "Run factory firmware\n");
     wifi_ap_init();
-    wifi_server_init();return;
+    wifi_server_init(); return;
 #else
     gWrite(PIN_RELAY, 1); gWrite(PIN_LED, 1);//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
    	gpio_config_t conf = {(BIT(PIN_RELAY) | BIT(PIN_LED)), GPIO_MODE_INPUT_OUTPUT_OD };
     gpio_config(&conf); gpio_set_drive_capability((gpio_num_t)PIN_RELAY,GPIO_DRIVE_CAP_0);
-    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); // enableInterrupt(PIN_LINE);
+    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); 
     nvs_read_sets();
     read_auth_data(); log_d("password_len %u, scan_key_len: %u\n", password_len, scan_key_len);DEBUGLN(password);
     read_bonded_mac();
     //ble_svc_gap_device_name_set(CONFIG_IDF_TARGET); //CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME //BLE_SVC_GAP_NAME_MAX_LEN
     ESP_ERROR_CHECK(nimble_port_init());
     ESP_ERROR_CHECK(gap_init());
-    ESP_ERROR_CHECK(gatt_svc_init());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(gatt_svc_init());
     ble_hs_cfg_init();
-    ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",NIMBLE_HS_STACK_SIZE, NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
+    ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",sizeof(xHostStack), NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
     timer_patch = esp_timer_init(timer_patch_off_cb);
     //auto heart = esp_timer_init([](void*){ update_heart_rate();send_heart_rate_notify();}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
     main_handle =  xTaskCreateStaticPinnedToCore(mainTask, "main", sizeof(xMainStack), NULL, 1, xMainStack, &xMainTaskBuffer, configNUM_CORES -1);//nimble_port_stop();
-    vTaskSuspend(main_handle);
+    enableInterrupt(PIN_LINE);
     //pincode = generate_pin(generate_salt());
     //auto addr = ESP.getEfuseMac(); print_addr((byte*)&addr);DEBUGLN();//esp_efuse_mac_get_default();
     //ble_delete_all_peers();
@@ -40,7 +41,8 @@ extern "C" void app_main() {
 
 static void mainTask(void *) {
     for(;;) {
-        switch (__unused uint32_t notify = ulTaskNotifyTake(0,portMAX_DELAY)) {
+        __unused uint32_t notify = ulTaskNotifyTake(0,portMAX_DELAY);
+        //switch () { 
         //case OTA:
             //vTaskSuspend(ble_handle);
             //set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
@@ -48,17 +50,20 @@ static void mainTask(void *) {
 		//case RESTART: vTaskDelay(1); esp_restart(); break;
         //case NOTIFY: send_alarm_notify(); break;
         //case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
-		} send_alarm_notify();
+		//} 
+        if(need_notify()) send_alarm_notify();
     }
 }
 
 static void isr_handler() {
     static bool prev_state = 1;
-    const auto now = gRead(PIN_LINE); ESP_DRAM_LOGI("ISR", "%u", now);
+    const bool now = gRead(PIN_LINE); ESP_DRAM_LOGI("ISR", "%u", now);
     if(prev_state != now) {
-        //prev_state = now;
-        if(sets.patch == 0) { gWrite(PIN_RELAY, now); }
-        else if(need_notify()) { xTaskNotifyFromISR(main_handle, 0, eNoAction, NULL);};
+        prev_state = now;
+        if(sets.patch == false) { 
+            gWrite(PIN_RELAY, now); 
+        }
+        else if(need_notify()) { xTaskNotifyFromISR(main_handle, 0, eNoAction, NULL); };
 //#ifdef DEBUG_ENABLE
         gWrite(PIN_LED, now);
 //#endif
@@ -115,20 +120,13 @@ uint32_t generate_salt() {
     static uint32_t last_change = __INT32_MAX__, salt; //ESP_LOGD(TAG, "change_device_name()");
     uint32_t sec = xTaskGetTickCount();
     if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) { ESP_LOGI(TAG, "TIME_CHANGE_PIN");
-        last_change = sec; salt = esp_random();
+        last_change = sec;
+#if !_ESP_LOG_ENABLED(3)
         ble_delete_all_peers(&bonded_addr);
-        pincode = generate_pin(salt);
+#endif
+        pincode = generate_pin(salt = esp_random());
     }
     return salt;
-}
-
-void patch_func(bool state) {
-    led_on();
-    disableInterrupt(PIN_LINE);
-    sets.patch = state;
-    nvs_write_sets();
-	decltype(TIMER_PATCH) patch_period = state ? TIMER_PATCH : TIMER_PATCH_OFF;
-	CHECK_(esp_timer_start(timer_patch, patch_period));
 }
 
 void ble_delete_all_peers(bond_mac_s* except) {
@@ -171,10 +169,14 @@ void nvs_read_sets() {
     auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets)); //reinterpret_cast<uint32_t*>(&sets)
     if (ret == ESP_OK) {
         if (crc16_le(0, (byte*)&sets, 2) == sets.crc) {
-            if(sets.patch) { patch_func(); }
-            else { timer_patch_off_cb((void*)1); }; //dont write
+            if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON");/* patch_func(); */ }
+            else { /* timer_patch_off_cb((void*)1); */ }; //dont write
             if (sets.updated == 0) { img_state(true); return; } //validate partition if it is verify state
-            else { sets.updated = 0; goto ota; }
+            else { sets.updated = 0; 
+                timer_valid = esp_timer_init([](void*){ esp_restart();}); 
+                esp_timer_start_once(timer_valid, SEC*60*30);
+                goto ota; 
+            }
         } else { ESP_LOGW("crc", ""); };
     } else { CHECK_(ret); } //alarm_on(false);
     sets = {}; 
@@ -223,7 +225,7 @@ void set_boot_partition(const esp_partition_subtype_t type) {
 
 void parse_adv_cb(cbyte* data, byte len) {
     //cbyte len = *data, type = data[1], size = scan_key_len;
-    if(len-1 == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
+    if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
         ESP_LOGW(TAG, "PASS!"); ble_gap_disc_cancel(); adv_init();
     }
     /* if(type == COMPLETE_NAME  || type == SHORT_NAME ) {
@@ -246,6 +248,7 @@ void parse_rx_data(const os_mbuf *buf) {
 		//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
 		esp_restart(); break;
     case DEF_VALID_KEY: ESP_LOGI("VALID", "");
+        if(timer_valid) { esp_timer_stop(timer_valid); esp_timer_delete(timer_valid);}
 		esp_ota_mark_app_valid_cancel_rollback(); break;
         //xTaskNotify(main_handle, VALID, eSetValueWithOverwrite);  break;
     case DEF_DELETE_ALL_PEERS: ble_delete_all_peers(); break;
@@ -257,7 +260,7 @@ void parse_rx_data(const os_mbuf *buf) {
 
 void get_task_list(String& str) {
 	size_t num = uxTaskGetNumberOfTasks(), heap = ESP.getFreeHeap(); log_d("NumberOfTasks = %u", num);
-	if (!str.reserve((num * 32 + 16) * (!!configGENERATE_RUN_TIME_STATS * 2))) return;
+	if (!str.reserve((num * 32 + 16) * (configGENERATE_RUN_TIME_STATS ? 2 : 1))) return;
 	char* const ptr = str.begin(); 
 	vTaskList(ptr);
     num = strlen(ptr); strcpy(&ptr[num], "Heap:\t"); ultoa(heap, &ptr[num+6], DEC); num += strlen(&ptr[num]); strcpy(&ptr[num],"\n\n"); num+=2;
@@ -314,7 +317,7 @@ rdy:            buf[i] = result;
     } //
     data_size = i;
 	//return realloc(buf, i);
-    for (size_t j = 0; j < i; j++){ DEBUGF("%02X ", buf[j]); }DEBUGLN();
+    //for (size_t j = 0; j < i; j++){ DEBUGF("%02X ", buf[j]); }DEBUGLN();
 }
 
 void read_noinit() {
