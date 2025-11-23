@@ -22,7 +22,6 @@ static const char* format_addr(const uint8_t addr[]) {
 }
 static void print_conn_desc(struct ble_gap_conn_desc *);
 static void set_random_addr(void);
-static void ble_scan_adv();
 static int gap_event_handler(struct ble_gap_event *, void *);
 static void parse_adv_data(const uint8_t* data, uint8_t data_len);
 static void print_rx_data(const os_mbuf *);
@@ -158,7 +157,7 @@ void adv_init(void) {
         rsp_fields.adv_itvl = BLE_GAP_ADV_ITVL_MS(500);
         rsp_fields.adv_itvl_is_present = 1;}
     __unused ble_hs_adv_fields adv_fields = {
-        .flags = BLE_HS_ADV_F_DISC_GEN  | BLE_HS_ADV_F_BREDR_UNSUP , // Type 0x01
+        .flags = BLE_HS_ADV_F_DISC_GEN  /* | BLE_HS_ADV_F_BREDR_UNSUP */ , // Type 0x01
         .uuids32 = &uuid,
         .num_uuids32 = 1,
         .uuids32_is_complete = 1, //0x05
@@ -335,6 +334,3 @@ void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep)
     synced = false;
 #endif
 }
-
-
-
