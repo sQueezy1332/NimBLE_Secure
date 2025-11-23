@@ -52,8 +52,8 @@ union ble_store_value; union ble_store_key;
 int gap_init();
 void host_sync_cb();
 bool is_connection_encrypted(uint16_t);
-//void ble_scan_adv();
-//void adv_init();
+void ble_scan_adv();
+void adv_init();
 
 extern uint32_t get_pincode();
 extern void patch_func();
