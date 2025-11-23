@@ -205,8 +205,7 @@ void adv_init(void) {
     ESP_LOGI(GAP, "advertising started!");
 }
 
-
-static void ble_scan_adv() {
+void ble_scan_adv() {
     __unused uint8_t own_addr_type = BLE_ADDR_PUBLIC;
     __unused ble_gap_disc_params disc_params = { .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0, .passive = 1, .filter_duplicates = 0, .disable_observer_mode = 0};
     __unused ble_gap_ext_disc_params ext_params = { .itvl = 0, .window = 0, .passive = SCAN_PASSIVE, .disable_observer_mode = 0 };
@@ -214,15 +213,18 @@ static void ble_scan_adv() {
     //ESP_RETURN_VOID_ON_ERROR(ble_hs_id_infer_auto(0, &own_addr_type), GAP, "determining address type");
     //ESP_RETURN_VOID_ON_ERROR(ble_gap_disc(BLE_ADDR_PUBLIC,0,&disc_params, gap_event_handler, NULL), GAP, "ble_gap_ext_disc");
     ESP_ERROR_CHECK(ble_gap_ext_disc(own_addr_type,0, 0, true, 0, 0,&ext_params,&ext_params, gap_event_handler, NULL));
-};
+}
 
-static void print_conn_desc(ble_gap_conn_desc *desc) {
-    ESP_LOGI(GAP, "connection handle: %u", desc->conn_handle);
-    ESP_LOGI(GAP, "local address: type (%u): %s", desc->our_id_addr.type, format_addr(desc->our_id_addr.val));
-    ESP_LOGI(GAP, "peer address: type (%u): %s", desc->peer_id_addr.type, format_addr(desc->peer_id_addr.val));
-    ESP_LOGI(GAP,"conn_itvl %d, conn_latency %d, timeout %u, ""encr %u, auth %u, bonded %u, key_size %u\n",
-             desc->conn_itvl, desc->conn_latency, desc->supervision_timeout,
-             desc->sec_state.encrypted, desc->sec_state.authenticated,desc->sec_state.bonded , desc->sec_state.key_size);
+int gap_init(void) {
+    ble_svc_gap_init(); /* Call NimBLE GAP initialization API */
+    //ESP_RETURN_ON_ERROR(ble_svc_gap_device_name_set(DEVICE_NAME), GAP, "set device name to %s", DEVICE_NAME); /* Set GAP device name */
+    ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
+    return ESP_OK;
+}
+
+void host_sync_cb() {
+    //set_random_addr(); adv_init();
+    ble_scan_adv();
 }
 
 __unused void set_random_addr(void) {
@@ -241,13 +243,6 @@ __unused void set_random_addr(void) {
 #endif
 }
 
-int gap_init(void) {
-    ble_svc_gap_init(); /* Call NimBLE GAP initialization API */
-    //ESP_RETURN_ON_ERROR(ble_svc_gap_device_name_set(DEVICE_NAME), GAP, "set device name to %s", DEVICE_NAME); /* Set GAP device name */
-    ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
-    return ESP_OK;
-}
-
 bool is_connection_encrypted(uint16_t conn_handle) {
     struct ble_gap_conn_desc desc;
     /* Print connection descriptor */
@@ -256,9 +251,13 @@ bool is_connection_encrypted(uint16_t conn_handle) {
     return desc.sec_state.encrypted;
 }
 
-void host_sync_cb() {
-    //set_random_addr(); adv_init();
-    ble_scan_adv();
+void print_conn_desc(ble_gap_conn_desc *desc) {
+    ESP_LOGI(GAP, "connection handle: %u", desc->conn_handle);
+    ESP_LOGI(GAP, "local address: type (%u): %s", desc->our_id_addr.type, format_addr(desc->our_id_addr.val));
+    ESP_LOGI(GAP, "peer address: type (%u): %s", desc->peer_id_addr.type, format_addr(desc->peer_id_addr.val));
+    ESP_LOGI(GAP,"conn_itvl %d, conn_latency %d, timeout %u, ""encr %u, auth %u, bonded %u, key_size %u\n",
+             desc->conn_itvl, desc->conn_latency, desc->supervision_timeout,
+             desc->sec_state.encrypted, desc->sec_state.authenticated,desc->sec_state.bonded , desc->sec_state.key_size);
 }
 
 void parse_adv_data(const uint8_t* data, uint8_t data_len) {
