@@ -5,18 +5,14 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
-
-/* Includes */
 /* NimBLE GAP APIs */
-#include "host/ble_gap.h"
-#include "services/gap/ble_svc_gap.h"
+/* #include "host/ble_gap.h"
+#include "services/gap/ble_svc_gap.h" */
 
 /* Defines */
-#define BLE_DEBUG
-#define DEVICE_NAME CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME //CONFIG_IDF_TARGET
-#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) + 4 * 2) //with space
-#define TIMER_ADV BLE_HS_FOREVER //(1000 * 60 * 10)
-#define TIME_SCAN       10 * 1000
+#define DEVICE_NAME CONFIG_IDF_TARGET //CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME)-1) //with space
+#define TIMER_ADV  (1000 * 60 * 5) //min /* BLE_HS_FOREVER */
 #define BLE_GAP_APPEARANCE 0x0541 //0x0200 BLE_GAP_APPEARANCE_GENERIC_TAG
 #define BLE_GAP_URI_PREFIX_HTTPS 0x17
 #define BLE_GAP_LE_ROLE_PERIPHERAL 0x00
@@ -29,35 +25,46 @@
 #define UUID128_DATA	0x21
 #define SHORT_NAME	    0x08
 #define COMPLETE_NAME	0x09
-#define GENERIC         0x18
-#define ACCESS          0x00
+#if _ESP_LOG_ENABLED(3) //CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL
+#define NIMLOG(msg, ...) printf((msg), ##__VA_ARGS__) //static_assert(0)
+#define SCAN_PASSIVE 0 
+#else
+#define NIMLOG(msg, ...) 
+#define SCAN_PASSIVE 1
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 //static int ble_gap_callback_event(struct ble_gap_event *event, void *arg);
 void ble_store_config_init(void);
-struct ble_hs_adv_fields;
-struct ble_gap_conn_desc;
-struct ble_hs_cfg;
-union ble_store_value;
-union ble_store_key;
+const char* ble_svc_gap_device_name(void);
+int ble_svc_gap_device_name_set(const char *);
+struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 
+struct ble_gap_event; struct os_mbuf;
+union ble_store_value; union ble_store_key;
 #ifdef __cplusplus
 }
 #endif
-void adv_init(void);
-int gap_init(void);
-bool is_connection_encrypted(uint16_t);
-extern uint32_t get_pincode();
-extern int gatt_svr_subscribe_cb(struct ble_gap_event *);
-extern void change_device_name();
-extern void patch_func();
-extern void print_task_list();
 
-extern void periodic_sync_scan();
-extern void parse_adv_data(const uint8_t* const &, uint8_t);
-extern void print_event_report(const ble_gap_disc_desc & disc);
-extern void print_event_report(const ble_gap_ext_disc_desc & disc);
-extern void print_event_report(const decltype(ble_gap_event::periodic_report) & rep);
-extern void print_event_report(const decltype(ble_gap_event::periodic_sync) & rep);
-extern void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep);
+
+
+int gap_init();
+void host_sync_cb();
+bool is_connection_encrypted(uint16_t);
+//void ble_scan_adv();
+//void adv_init();
+
+extern uint32_t get_pincode();
+extern void patch_func();
+extern void parse_adv_cb(const uint8_t*, uint8_t);
+//extern void impl_io_on();
+//extern void impl_io_off();
+extern int gatt_svr_subscribe_cb(const ble_gap_event *);
+extern void clear_characteristic();
+extern void set_encryption();
+extern uint32_t generate_salt();
+extern void print_task_list();
+//extern void start_adv();
+
+extern void parse_rx_data(const os_mbuf *);
