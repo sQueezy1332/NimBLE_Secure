@@ -87,7 +87,8 @@ void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 
 __unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
-void patch_func() { sets.patch = true; nvs_write_sets();
+void patch_func() { 
+	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
 	CHECK_(esp_timer_start(timer_patch, TIMER_PATCH)); 
 }
 
