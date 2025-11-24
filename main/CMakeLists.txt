@@ -9,4 +9,4 @@ idf_component_register(SRCS "${srcs}" SRCS "main.cpp"
     "libs/ESP_OTAserver"
     EMBED_FILES "data/config.html.gz" "data/ota.html.gz"
     ) 
-# set(ENV{ARDUINO_SKIP_TICK_CHECK} true)
+set(ENV{ARDUINO_SKIP_TICK_CHECK} true)
