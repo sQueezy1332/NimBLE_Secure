@@ -31,7 +31,7 @@
 #define PIN_LED 8
 
 //static_assert(sizeof(time_t) == 4);
-typedef struct { byte patch , updated;  uint16_t crc; } sets_t;
+typedef struct { byte patch , updated , dummy;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY,  MAIN, RESTART, } action;
 
@@ -86,6 +86,12 @@ void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 
 
 __unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
+
+decltype(sets_t::crc) crc_func(const sets_t & buf) {
+	if(sizeof(sets_t::crc) == 2) {
+		return crc16_le(0,(byte*)&buf, sizeof(sets_t::crc) );
+	}else return crc8_le(0,(byte*)&buf, sizeof(sets_t::crc) );
+}
 
 void patch_func() { 
 	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
