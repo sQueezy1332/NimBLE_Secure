@@ -88,9 +88,7 @@ void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 __unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
 decltype(sets_t::crc) crc_func(const sets_t & buf) {
-	if(sizeof(sets_t::crc) == 2) {
-		return crc16_le(0,(byte*)&buf, sizeof(sets_t::crc) );
-	}else return crc8_le(0,(byte*)&buf, sizeof(sets_t::crc) );
+	return (sizeof(sets_t::crc) == 2) ? crc16_le(0,(byte*)&buf, sizeof(sets_t::crc)) : crc8_le(0,(byte*)&buf, sizeof(sets_t::crc));
 }
 
 void patch_func() { 
