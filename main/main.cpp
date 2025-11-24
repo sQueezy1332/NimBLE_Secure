@@ -159,7 +159,7 @@ void save_bonded_mac(const ble_addr_t & addr) {
 }
 
 void nvs_write_sets(nvsApi nvs) {
-	sets.crc = crc16_le(0, (byte*)&sets, 2);  log_d("%u, %u, %04X", sets.patch, sets.updated, sets.crc);
+	sets.crc = crc_func(sets);  log_d("%u, %u, %04X", sets.patch, sets.updated, sets.crc);
     CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
@@ -168,7 +168,7 @@ void nvs_read_sets() {
     nvsApi nvs(NVS_SPACE_SETS, NVS_READWRITE);
     auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets)); //reinterpret_cast<uint32_t*>(&sets)
     if (ret == ESP_OK) {
-        if (crc16_le(0, (byte*)&sets, 2) == sets.crc) {
+        if (crc_func(sets) == sets.crc) {
             if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON");/* patch_func(); */ }
             else { /* timer_patch_off_cb((void*)1); */ }; //dont write
             if (sets.updated == 0) { img_state(true); return; } //validate partition if it is verify state
