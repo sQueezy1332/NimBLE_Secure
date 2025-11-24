@@ -23,9 +23,8 @@ extern "C" void app_main() {
     nvs_read_sets();
     read_auth_data(); log_d("password_len %u, scan_key_len: %u\n", password_len, scan_key_len);DEBUGLN(password);
     read_bonded_mac();
-    //ble_svc_gap_device_name_set(CONFIG_IDF_TARGET); //CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME //BLE_SVC_GAP_NAME_MAX_LEN
     ESP_ERROR_CHECK(nimble_port_init());
-    ESP_ERROR_CHECK(gap_init());
+    gap_init();
     ESP_ERROR_CHECK_WITHOUT_ABORT(gatt_svc_init());
     ble_hs_cfg_init();
     ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",sizeof(xHostStack), NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
@@ -72,7 +71,7 @@ static void isr_handler() {
 
  void ble_hs_cfg_init() {
     ble_hs_cfg.reset_cb = [](int reason) { ESP_LOGI(TAG, "nimble stack reset, reason: %d", reason);}; //on_stack_reset is called when host resets BLE stack due to errors
-    ble_hs_cfg.sync_cb = ble_scan_adv;//adv_init; // called when host has synced with controller
+    ble_hs_cfg.sync_cb = host_sync_cb;
     ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
@@ -84,6 +83,7 @@ static void isr_handler() {
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_store_config_init();
+    ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK);
 }
 
 void rand_device_name() {
@@ -133,13 +133,13 @@ void ble_delete_all_peers(bond_mac_s* except) {
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
     ble_addr_t peer_id_addrs[CONFIG_BT_NIMBLE_MAX_BONDS];
     int num_peers;
-    ESP_RETURN_VOID_ON_ERROR(ble_store_util_bonded_peers(peer_id_addrs, &num_peers, sizeof(peer_id_addrs)), TAG, "");
+    CHECK_VOID(ble_store_util_bonded_peers(peer_id_addrs, &num_peers, sizeof(peer_id_addrs)));
     ESP_LOGI(TAG, "num_peers %u", num_peers);
     for(; num_peers > 0;) {
         --num_peers; print_addr((peer_id_addrs[num_peers].val));
         if(except && (*reinterpret_cast<uint64_t*>(except) != 0) &&
             !ble_addr_cmp(&except->arr, &peer_id_addrs[num_peers])) continue;
-        ESP_RETURN_VOID_ON_ERROR(ble_store_util_delete_peer(&peer_id_addrs[num_peers]), TAG, ""); 
+        CHECK_VOID(ble_store_util_delete_peer(&peer_id_addrs[num_peers])); 
     }
 #endif
 }
@@ -160,7 +160,7 @@ void save_bonded_mac(const ble_addr_t & addr) {
 
 void nvs_write_sets(nvsApi nvs) {
 	sets.crc = crc16_le(0, (byte*)&sets, 2);  log_d("%u, %u, %04X", sets.patch, sets.updated, sets.crc);
-    ESP_RETURN_VOID_ON_ERROR(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)), NVS, "");
+    CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
 
@@ -185,14 +185,14 @@ ota: nvs_write_sets(nvs);
 
 void read_auth_data() {
     nvsApi handle; size_t required_size;
-    ESP_RETURN_VOID_ON_ERROR(handle.begin(NVS_SPACE_SETS, NVS_READONLY), NVS, "");
-    ESP_RETURN_VOID_ON_ERROR(nvs_get_blob(handle, NVS_KEY_BLE_PASS, NULL, &required_size), NVS, "");
+    CHECK_VOID(handle.begin(NVS_SPACE_SETS, NVS_READONLY));
+    CHECK_VOID(nvs_get_blob(handle, NVS_KEY_BLE_PASS, NULL, &required_size));
     if(required_size < 16 || required_size > sizeof(password)) return;
-    ESP_RETURN_VOID_ON_ERROR(nvs_get_blob(handle, NVS_KEY_BLE_PASS, password, &required_size), NVS, "");
+    CHECK_VOID(nvs_get_blob(handle, NVS_KEY_BLE_PASS, password, &required_size));
     password_len = required_size;
-    ESP_RETURN_VOID_ON_ERROR(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, NULL, &required_size), NVS, "");
+    CHECK_VOID(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, NULL, &required_size));
     if(required_size < 8 || required_size > sizeof(scan_key)) return;
-    ESP_RETURN_VOID_ON_ERROR(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, scan_key, &required_size), NVS, "");
+    CHECK_VOID(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, scan_key, &required_size));
     scan_key_len = required_size;
 }
 
@@ -200,14 +200,14 @@ esp_err_t save_auth_data(cch* pass) {
     //extern auth_t Auth;
     if (!pass && !scan_key_len) { ESP_LOGW(TAG, "!Auth"); return 0xFFFF; }
     nvsApi handle;
-    ESP_RETURN_ON_ERROR(handle.begin(NVS_SPACE_SETS, NVS_READWRITE), NVS, "");
+    CHECK_RET(handle.begin(NVS_SPACE_SETS, NVS_READWRITE));
     if(pass && password_len) {
-        ESP_RETURN_ON_ERROR(nvs_set_blob(handle, NVS_KEY_BLE_PASS, pass, password_len), NVS, "");
+        CHECK_RET(nvs_set_blob(handle, NVS_KEY_BLE_PASS, pass, password_len));
     }
     if(scan_key_len) {
-        ESP_RETURN_ON_ERROR(nvs_set_blob(handle, NVS_KEY_SCAN_DATA, scan_key, scan_key_len), NVS, "");
+        CHECK_RET(nvs_set_blob(handle, NVS_KEY_SCAN_DATA, scan_key, scan_key_len));
     } //else return 0xFF00;
-    ESP_RETURN_ON_ERROR(nvs_commit(handle), NVS, "");
+    CHECK_RET(nvs_commit(handle));
     return ESP_OK;
 }
 
@@ -237,22 +237,23 @@ void parse_adv_cb(cbyte* data, byte len) {
 }
 
 void parse_rx_data(const os_mbuf *buf) {
-    if(buf->om_len != 4) return; extern ble_gap_conn_desc desc;
+    extern ble_gap_conn_desc desc;
+    if(buf->om_len != 4) return;
     //else if(buf->om_len == 8){} 
     auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
     switch (val) {
 	case DEF_OTA_KEY: ESP_LOGI("OTA", "");//ESP_ERROR_CHECK(nimble_port_stop());
         set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY); ESP_LOGI(TAG, "reboot to FACTORY...");
-        //xTaskNotify(main_handle, OTA, eSetValueWithOverwrite);  break;
     case DEF_RESTART_KEY: ESP_LOGI("RESTART", "");
 		//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
 		esp_restart(); break;
     case DEF_VALID_KEY: ESP_LOGI("VALID", "");
         if(timer_valid) { esp_timer_stop(timer_valid); esp_timer_delete(timer_valid);}
 		esp_ota_mark_app_valid_cancel_rollback(); break;
-        //xTaskNotify(main_handle, VALID, eSetValueWithOverwrite);  break;
+    //case 1234: set_cts_unix(val);
     case DEF_DELETE_ALL_PEERS: ble_delete_all_peers(); break;
-    case DEF_SAVE_MAC: save_bonded_mac(desc.peer_id_addr); break;
+    case DEF_NVS_ERASE_ALL: nvsErase(); break;
+    case DEF_SAVE_MAC:  save_bonded_mac(desc.peer_id_addr); break;
     case DEF_PRINT_KEY: DEBUG(get_task_list()); break;
     default: ESP_LOGW("key", "0x%08X", val);
     }
