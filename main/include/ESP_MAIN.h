@@ -221,11 +221,11 @@ inline uint64_t timer_read(gptimer_handle_t handle) {
 void ARDUINO_ISR_ATTR pinMode(uint8_t pin, uint8_t mode) {
 	if (mode >= 32) { log_w("%u, %u", pin, mode); return; }
 	gpio_config_t conf = {
-		.pin_bit_mask = (1ULL << pin),						/*!< GPIO pin: set with bit mask, each bit maps to a GPIO */
-		.mode = (gpio_mode_t)(mode & GPIO_MODE_INPUT_OUTPUT_OD),	/*!<  GPIO mode: set input/output mode                     */
-		.pull_up_en = mode & PULLUP ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,				/*!< GPIO pull-up                                         */
-		.pull_down_en = mode & PULLDOWN ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,			/*!< GPIO pull-down                                       */
-		.intr_type = (gpio_int_type_t)GPIO_LL_GET_HW(GPIO_PORT_0)->pin[pin].int_type, /*!< GPIO interrupt type - previously set                 */
+		.pin_bit_mask = (1ULL << pin),
+		.mode = (gpio_mode_t)(mode & GPIO_MODE_INPUT_OUTPUT_OD),
+		.pull_up_en = mode & PULLUP ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,		
+		.pull_down_en = mode & PULLDOWN ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,		
+		.intr_type = (gpio_int_type_t)GPIO_LL_GET_HW(GPIO_PORT_0)->pin[pin].int_type,
 	};
 	if (gpio_config(&conf) != ESP_OK) log_e("IO %i config failed", pin);
 }
@@ -267,5 +267,3 @@ void detachInterrupt(uint8_t pin) {
 void enableInterrupt(uint8_t pin) { gpio_intr_enable((gpio_num_t)pin); }
 
 void disableInterrupt(uint8_t pin) { gpio_intr_disable((gpio_num_t)pin); }
-
-
