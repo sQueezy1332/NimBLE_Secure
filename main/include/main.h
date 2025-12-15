@@ -2,7 +2,7 @@
 #pragma GCC diagnostic ignored "-Wmisleading-indentation" //braces
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"  //switch
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
-//#define DEBUG_ENABLE
+#define DEBUG_ENABLE
 #define _WANT_USE_LONG_TIME_T
 #include <ESP_MAIN.h>
 #include "driver/uart.h"
@@ -14,7 +14,9 @@
 #include "heart_rate.h"
 //#include "led.h"
 #include "common.h"
-					//#define CONFIG_FACTORY_FIRMWARE
+#include "esp_mac.h"
+#include "esp_hmac.h"
+				#define CONFIG_FACTORY_FIRMWARE
 #ifdef CONFIG_FACTORY_FIRMWARE
 #include "web_server.h"
 #endif
@@ -23,8 +25,8 @@
 #define TAG "MAIN"
 #define TMR "TMR"
 #define NVS "NVS"
-#define gWrite(x,y) digitalWrite(x, y)
-#define gRead(x) digitalRead(x)
+#define dWrite(x,y) digitalWrite(x, y)
+#define dRead(x) digitalRead(x)
 
 #define PIN_LINE 0//9
 #define PIN_RELAY 3
@@ -33,17 +35,17 @@
 //static_assert(sizeof(time_t) == 4);
 typedef struct { byte patch , updated , dummy;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
-typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY,  MAIN, RESTART, } action;
+typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
 
 StackType_t xMainStack[4*1024] , xHostStack[NIMBLE_HS_STACK_SIZE]; //static_assert(configTIMER_TASK_STACK_DEPTH > 3000);
 StaticTask_t xMainTaskBuffer , xHostTaskBuffer;
 TaskHandle_t main_handle, ble_handle;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
 esp_timer_handle_t timer_patch, timer_valid;
-static char password[64] = DEF_BLE_PASS;
-byte scan_key[64] = DEF_BLE_SCAN_DATA;
-byte password_len = sizeof(DEF_BLE_PASS)-1;  static_assert(sizeof(DEF_BLE_PASS)-1 < 64);
-byte scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(sizeof(DEF_BLE_PASS)-1 < 64);
+byte passkey[32] = DEF_BLE_PASS_BASE32;
+byte scan_key[32] = DEF_BLE_SCAN_DATA;
+byte passkey_len = DEF_BLE_PASS_LEN; static_assert(DEF_BLE_PASS_LEN <= sizeof(passkey)); //sizeof(DEF_BLE_PASS)-1;
+byte scan_key_len = DEF_BLE_SCAN_DATA_LEN; static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
 static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
 static sets_t sets = {} /* __attribute__((section(".noinit." "1")))  */; 
@@ -63,7 +65,8 @@ extern "C" void ble_store_config_init(void);
 __unused static void IRAM_ATTR isr_handler();
 void patch_func();
 __unused static void rand_device_name();
-static uint32_t generate_pin(uint32_t, const char * = password, byte = password_len);
+void set_ble_device_name();
+//static uint32_t generate_pin(uint32_t, const char * = (char *)passkey, byte = passkey_len);
 static void get_task_list(String& str);
 String get_task_list() { String str; get_task_list(str); return str; }
 void print_task_list() { DEBUGLN(get_task_list()); DEBUGLN(esp_timer_dump(stdout)); };
@@ -78,11 +81,16 @@ void read_noinit();
 void write_noinit(byte val);
 void nvs_read_sets();
 void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETS, NVS_READWRITE));
-esp_err_t save_auth_data(cch* = nullptr);
+esp_err_t save_auth_data();
 void read_auth_data();
 void update_start_cb() { sets.updated = 0; };
 void update_finish_cb() { sets.updated = 1; nvs_write_sets(); };
 void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
+int hmac_hash(byte*, const byte*, size_t, const byte*, size_t, mbedtls_md_type_t = MBEDTLS_MD_SHA1);
+int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
+int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
+uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt);
+uint32_t TOTPget(const byte* key, byte key_len, uint32_t time = time(NULL));
 
 
 __unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
@@ -99,7 +107,7 @@ void patch_func() {
 void timer_patch_off_cb(void * arg) { sets.patch = false;  nvs_write_sets(); }
 void impl_io_on() { patch_func(); }
 void impl_io_off() {  sets.patch = true; CHECK_(esp_timer_start(timer_patch, TIMER_PATCH_OFF)); }
-uint8_t impl_io_get() { return digitalRead(PIN_LINE); }
+uint8_t impl_io_get() { return dRead(PIN_LINE); }
 
 #ifdef DEBUG_ENABLE
 uint32_t get_pincode() { return 111111; }
@@ -178,14 +186,16 @@ void nvs_test() {
 	nvs_release_iterator(it);
 }
 
-void nvsErase() {
+void nvsErase(cch* except) {
 	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
 	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
 	while (ret == ESP_OK) {
 		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
-		nvsApi nvs; DEBUGF("space '%s'\tkey '%s'\ttype '%d'", entry.namespace_name, entry.key, entry.type);
+		nvsApi nvs; DEBUGF("space '%s'\tkey '%s'\ttype '%d'\n", entry.namespace_name, entry.key, entry.type);
 		if(nvs.begin(entry.namespace_name, NVS_READWRITE) == ESP_OK) {
-			nvs_erase_all(nvs);
+			//if(*reinterpret_cast<uint32_t*>(entry.namespace_name) != *reinterpret_cast<const uint32_t*>("phy"))
+			if(except && !strcmp(entry.namespace_name, except)) continue;
+				nvs_erase_all(nvs);
 		}
 		ret = nvs_entry_next(&it);
 	}
