@@ -14,17 +14,19 @@ static void onConfigRequest(class AsyncWebServerRequest*);
 static void ota_progress(size_t progress, size_t size) __unused;
 static void timer_callback(void *);
 
-extern byte scan_key[64];
-extern byte scan_key_len, password_len;
+extern byte scan_key[32]; extern byte passkey[32];
+extern byte scan_key_len, passkey_len;
 
 template <bool big_endian, char sep> void bytes_to_str(char* ptr, cbyte* buf, byte data_size);
 extern void strtoB(const char* ptr, byte *buf, size_t & data_size, size_t buf_len = sizeof(scan_key));
 extern void set_main_part();
 extern String get_task_list();
-extern esp_err_t save_auth_data(const char* pass);
-extern void nvsErase();
+extern esp_err_t save_auth_data();
+extern void nvsErase(const char* = nullptr);
+extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
+extern int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 
-static char* pass_buf = nullptr;
+//static char* pass_buf = nullptr;
 static esp_timer_handle_t timer_wifi;
 
 void WiFiCallback(arduino_event_id_t event) {
@@ -72,12 +74,13 @@ void wifi_server_init() {
 		});
 	server.on("/main", HTTP_GET, [](pReq request ) { request->send(200, "text/plain", "reboot to OTA_0...");
 		set_main_part(); esp_timer_start_once(timer_wifi, 1000*100); ESP_LOGI(STAG, "reboot to OTA_0..."); } );
-    server.on("/save", HTTP_GET, [](pReq request) { auto err = save_auth_data(pass_buf); 
+    server.on("/save", HTTP_GET, [](pReq request) { auto err = save_auth_data(); 
 		request->send(200, "text/plain", String(err ? "0x" + String(err, HEX) : "Saved")); });
     server.on("/task_list", HTTP_GET, [](pReq request) { request->send(200, "text/plain", std::move(get_task_list())); });
 	server.on("/restart", HTTP_GET, [](pReq request) { request->send(200, "text/plain", "Esp restarting...");
 		esp_timer_start_once(timer_wifi, 1000*100); /* timer_wifi = NULL; */ });
-	server.on("/nvs_erase_all", HTTP_GET, [](pReq request) { request->send(200, "text/plain", "nvsErase()"); nvsErase();});
+	server.on("/nvs_erase_all", HTTP_GET, [](pReq request) { request->send(200, "text/plain", "nvsErase(null)"); nvsErase();});
+	server.on("/nvs_erase", HTTP_GET, [](pReq request) { request->send(200, "text/plain", "nvsErase(phy)"); nvsErase("phy");});
 	server.on(CHANGE_AUTH, HTTP_GET, [](pReq request) {
 #ifndef NO_SPIFFS
         auto response = request->beginResponse(SPIFFS, "/config.html", "text/html"); if(!response) return;
@@ -104,40 +107,44 @@ static void onConfigRequest(AsyncWebServerRequest* request) {
 	if (!pFIRST || !pSECOND) { log_d("getParam() NULL"); return; }
 	size_t FIRST_len = pFIRST->value().length(), SECOND_len = pSECOND->value().length();
 	bool wrongFIRST = FIRST_len < 16 || FIRST_len > 64;
-	bool wrongSECOND = SECOND_len < 8 || SECOND_len > 64*4;
+	bool wrongSECOND = SECOND_len < 8 || SECOND_len > sizeof(scan_key)*3;
 	if (wrongFIRST && wrongSECOND) {
 		String str("WRONG INPUT\n");
 		str += FIRST_len; str += '\n'; str += SECOND_len;
 		request->send(400, "text/plain", str); return;
-		} 
-		 log_d("%p", pass_buf);//tlsf_free()
-	free(pass_buf); pass_buf = nullptr; scan_key_len = 0; password_len = 0; 
+		}//log_d("%p", pass_buf);//tlsf_free()
+	char str[64]; int len = 0; scan_key_len = 0; passkey_len = 0;
 	if (!wrongFIRST) {
-		String& temp = const_cast<String&>(pFIRST->value());
+		//const String& temp = pFIRST->value();
 		/*static_assert(sizeof(String) == 16);
 		if (FIRST_len < sizeof(String) - 1) {
 				 pass_buf = (char*)malloc(16);
 				memcpy(pass_buf, temp.begin(), FIRST_len+1); 
 		} else  */
-			{ pass_buf = temp.begin(); *reinterpret_cast<long*>(&temp) = 0; }
-		password_len = FIRST_len; //pass_buf[FIRST_len] = '\0';
+		len = base32_decode(pFIRST->value().c_str(), passkey, sizeof(passkey)); //DEBUGF("\ncount = %d\n", len);
+    	if(len > 0) {
+			passkey_len = len;
+			len = base32_encode(passkey, len, str, sizeof(str));
+		} else { str[0] = '\0'; len = 0; passkey_len = 0; }
+		//{ pass_buf = temp.begin(); *reinterpret_cast<long*>(&temp) = 0; } //move pointer
+		 //pass_buf[FIRST_len] = '\0';
 	}
 	String& str_second = const_cast<String&>(pSECOND->value());
 	if (!wrongSECOND) {
 		size_t hex_size, str_size;
 		strtoB(str_second.c_str(), scan_key, hex_size);
-		if (hex_size >= 8 && hex_size <= 64 && str_second.reserve(str_size = hex_size * 3)) {
+		if (hex_size >= 8 && hex_size <= sizeof(scan_key) && str_second.reserve(str_size = hex_size * 3)) {
 			bytes_to_str<true, ' '>(str_second.begin(), scan_key, hex_size);
 			reinterpret_cast<long*>(&str_second)[2] = str_size - 1;
 			scan_key_len = hex_size;
 		}
 		//log_d("%s", str_second.c_str()); log_d("str_len %u", str_second.length());
-	}DEBUGLN(pass_buf);  DEBUGLN(str_second);
+	}/* DEBUGLN(str);  */ DEBUGLN(str_second);
 	String log; log.reserve(255);
 	//DEBUGF("POST[%s]: %s\n", pFIRST->name().c_str(), pFIRST->value().c_str(), pSECOND->name().c_str(), pSECOND->value().c_str());
-	log = "PASS ["; if (!wrongFIRST) log.concat(pass_buf, password_len); log += "]\n";
+	log = "PASS ["; if (!wrongFIRST) { log.concat(str, len); } log += "]\n";
 	log += "SCAN_KEY ["; if (!wrongSECOND) log += str_second; log += "]\n";
-	log += "password_len = "; log += password_len;
+	log += "passkey_len(base32) = "; log += passkey_len;
 	log += "\nscan_key_len = "; log += scan_key_len;
 	log += "\ngoto /save.";
 	DEBUGLN(log); request->send(200, "text/plain", log); //resumeTask(UPD_AUTH);
