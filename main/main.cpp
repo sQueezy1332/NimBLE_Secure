@@ -7,7 +7,6 @@ extern "C" void app_main() {
     //read_noinit();  //0x253D7465 == crc8 //609862 //570586
     //ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());nvs_test();ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());
 #ifdef DEBUG_ENABLE
-    //generate_pin(12345678); //432130
     {byte buf[64]; char str[64]; const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
     for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); };DEBUGF("\ncount = %d\n", len);
     if(len > 0){base32_encode(buf, len, str, sizeof(str));DEBUGF("%s\nTOTP = %lu\n",str,TOTPget(buf, len, 12345678));}} //885100
@@ -24,7 +23,7 @@ extern "C" void app_main() {
     dWrite(PIN_RELAY, 1); dWrite(PIN_LED, 1);//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
    	gpio_config_t conf = {(BIT(PIN_RELAY) | BIT(PIN_LED)), GPIO_MODE_INPUT_OUTPUT_OD };
     gpio_config(&conf); gpio_set_drive_capability((gpio_num_t)PIN_RELAY,GPIO_DRIVE_CAP_0);
-    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE);
+    timer_patch = esp_timer_init(timer_patch_off_cb);
     nvs_read_sets();
     read_auth_data(); log_d("passkey_len %u, scan_key_len: %u\n", passkey_len, scan_key_len);//DEBUGLN(passkey);
     read_bonded_mac();
@@ -33,11 +32,12 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK_WITHOUT_ABORT(gatt_svc_init());
     ble_hs_cfg_init();
     ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",sizeof(xHostStack), NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
-    timer_patch = esp_timer_init(timer_patch_off_cb);
     //auto heart = esp_timer_init([](void*){ update_heart_rate();send_heart_rate_notify();}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
+#ifndef GENERIC_PATCHER
     main_handle =  xTaskCreateStaticPinnedToCore(mainTask, "main", sizeof(xMainStack), NULL, 1, xMainStack, &xMainTaskBuffer, configNUM_CORES -1);//nimble_port_stop();
+    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE);
     enableInterrupt(PIN_LINE);
-    //pincode = generate_pin(generate_salt());
+#endif
     //auto addr = ESP.getEfuseMac(); print_addr((byte*)&addr);DEBUGLN();//esp_efuse_mac_get_default();
     //ble_delete_all_peers();
 #endif
@@ -139,7 +139,7 @@ void nvs_read_sets() {
     auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets)); //reinterpret_cast<uint32_t*>(&sets)
     if (ret == ESP_OK) {
         if (crc_func(sets) == sets.crc) {
-            if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON");/* patch_func(); */ }
+            if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
             else { /* timer_patch_off_cb((void*)1); */ }; //dont write
             if (sets.updated == 0) { img_state(true); return; } //validate partition if it is verify state
             else { sets.updated = 0; 
@@ -309,7 +309,7 @@ uint32_t generate_salt() {
         ble_delete_all_peers(&bonded_addr);
 #endif
         salt = time(NULL); 
-        if(salt < 1765832400) salt = 0;
+        if(salt < 1766600000) salt = 0;
         pincode = TOTPget(passkey, passkey_len, salt); ESP_LOGI(TAG, "NEW PIN: %lu\nTime: %lu", pincode, salt);
     }
     return salt;
@@ -322,16 +322,12 @@ uint32_t TOTPget(const byte* key, byte key_len, uint32_t time) {
 uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt) {
     const byte salt_len = sizeof(salt); byte* const pSalt = reinterpret_cast<byte*>(&salt);
     byte hash[20];  uint32_t result;
-
     swap_in_place(pSalt, salt_len); //salt = ntohll(salt);
-
     int ret = hmac_hash(hash, key, key_len, pSalt, salt_len); 
     if(ret != 0) return 0;
-
 	for (byte i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
 		reinterpret_cast<byte*>(&result)[3 - i] = hash[offset + i];
 	}
-
 	result = (result & 0x7FFFFFFF) % 1000000;
 	return result;
 }
