@@ -16,7 +16,8 @@
 #include "common.h"
 #include "esp_mac.h"
 #include "esp_hmac.h"
-				#define CONFIG_FACTORY_FIRMWARE
+				//#define CONFIG_FACTORY_FIRMWARE
+				#define GENERIC_PATCHER
 #ifdef CONFIG_FACTORY_FIRMWARE
 #include "web_server.h"
 #endif
@@ -28,9 +29,14 @@
 #define dWrite(x,y) digitalWrite(x, y)
 #define dRead(x) digitalRead(x)
 
-#define PIN_LINE 0//9
 #define PIN_RELAY 3
+#define PIN_LINE 0//9
 #define PIN_LED 8
+#ifdef GENERIC_PATCHER
+#define PATCH_RELAY(x) dWrite(PIN_RELAY, x)
+#else
+#define PATCH_RELAY(x)
+#endif
 
 //static_assert(sizeof(time_t) == 4);
 typedef struct { byte patch , updated , dummy;  uint8_t crc; } sets_t;
@@ -63,7 +69,7 @@ extern "C" void ble_store_config_init(void);
 //extern void set_cts_unix(time_t now);
 
 __unused static void IRAM_ATTR isr_handler();
-void patch_func();
+static void patch_func(uint64_t = TIMER_PATCH);
 __unused static void rand_device_name();
 void set_ble_device_name();
 //static uint32_t generate_pin(uint32_t, const char * = (char *)passkey, byte = passkey_len);
@@ -99,14 +105,16 @@ decltype(sets_t::crc) crc_func(const sets_t & buf) {
 	return (sizeof(sets_t::crc) == 2) ? crc16_le(0,(byte*)&buf, sizeof(sets_t::crc)) : crc8_le(0,(byte*)&buf, sizeof(sets_t::crc));
 }
 
-void patch_func() { 
-	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
-	CHECK_(esp_timer_start(timer_patch, TIMER_PATCH)); 
+void patch_func(uint64_t period) { 
+	if(!sets.patch) { PATCH_RELAY(HIGH); sets.patch = true; nvs_write_sets(); }
+	CHECK_(esp_timer_start(timer_patch, period)); 
 }
 
-void timer_patch_off_cb(void * arg) { sets.patch = false;  nvs_write_sets(); }
+static void timer_patch_off_cb(void *) { sets.patch = false; PATCH_RELAY(LOW); nvs_write_sets(); }
+
 void impl_io_on() { patch_func(); }
-void impl_io_off() {  sets.patch = true; CHECK_(esp_timer_start(timer_patch, TIMER_PATCH_OFF)); }
+void impl_io_off() { patch_func(TIMER_PATCH_OFF); }
+
 uint8_t impl_io_get() { return dRead(PIN_LINE); }
 
 #ifdef DEBUG_ENABLE
