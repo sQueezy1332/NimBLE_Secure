@@ -11,7 +11,7 @@
 
 /* Defines */
 #define DEVICE_NAME CONFIG_IDF_TARGET //CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME
-#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME)-1) //with space
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME)-1) 
 #define TIMER_ADV  (1000 * 60 * 5) //min /* BLE_HS_FOREVER */
 #define BLE_GAP_APPEARANCE 0x0541 //0x0200 BLE_GAP_APPEARANCE_GENERIC_TAG
 #define BLE_GAP_URI_PREFIX_HTTPS 0x17
@@ -56,15 +56,15 @@ void ble_scan_adv();
 void adv_init();
 
 extern uint32_t get_pincode();
-extern void patch_func();
 extern void parse_adv_cb(const uint8_t*, uint8_t);
-//extern void impl_io_on();
-//extern void impl_io_off();
+extern void impl_io_on();
+extern void impl_io_off();
 extern int gatt_svr_subscribe_cb(const ble_gap_event *);
 extern void clear_characteristic();
 extern void set_encryption();
 extern uint32_t generate_salt();
 extern void print_task_list();
+extern void set_ble_device_name();
 //extern void start_adv();
 
 extern void parse_rx_data(const os_mbuf *);
