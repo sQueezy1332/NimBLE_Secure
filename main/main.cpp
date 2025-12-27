@@ -142,7 +142,7 @@ void nvs_read_sets() {
     auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets)); //reinterpret_cast<uint32_t*>(&sets)
     if (ret == ESP_OK) {
         if (crc_func(sets) == sets.crc) {
-            if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); RELAY_PATCH_IMPL(HIGH); patch_func();  }
+            if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
             else { /* timer_patch_off_cb((void*)1); */ }; //dont write
             if (sets.updated == 0) { img_state(true); return; } //validate partition if it is verify state
             else { sets.updated = 0; 
