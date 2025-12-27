@@ -33,9 +33,13 @@
 #define PIN_LINE 0//9
 #define PIN_LED 8
 #ifdef GENERIC_PATCHER
-#define PATCH_RELAY(x) dWrite(PIN_RELAY, x)
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
+#define RELAY_DEFAULT_IMPL()
+#define RELAY_PATCH_IMPL(x) dWrite(PIN_RELAY, x)
 #else
-#define PATCH_RELAY(x)
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT_OD)
+#define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 1)
+#define RELAY_PATCH_IMPL(x)
 #endif
 
 //static_assert(sizeof(time_t) == 4);
@@ -98,7 +102,6 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt);
 uint32_t TOTPget(const byte* key, byte key_len, uint32_t time = time(NULL));
 
-
 __unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
 decltype(sets_t::crc) crc_func(const sets_t & buf) {
@@ -106,11 +109,11 @@ decltype(sets_t::crc) crc_func(const sets_t & buf) {
 }
 
 void patch_func(uint64_t period) { 
-	if(!sets.patch) { PATCH_RELAY(HIGH); sets.patch = true; nvs_write_sets(); }
+	if(!sets.patch) { RELAY_PATCH_IMPL(HIGH); ; nvs_write_sets(); }
 	CHECK_(esp_timer_start(timer_patch, period)); 
 }
 
-static void timer_patch_off_cb(void *) { sets.patch = false; PATCH_RELAY(LOW); nvs_write_sets(); }
+static void timer_patch_off_cb(void *) { sets.patch = false; RELAY_PATCH_IMPL(LOW); nvs_write_sets(); }
 
 void impl_io_on() { patch_func(); }
 void impl_io_off() { patch_func(TIMER_PATCH_OFF); }
