@@ -109,7 +109,8 @@ decltype(sets_t::crc) crc_func(const sets_t & buf) {
 }
 
 void patch_func(uint64_t period) { 
-	if(!sets.patch) { RELAY_PATCH_IMPL(HIGH); sets.patch = true; nvs_write_sets(); }
+	RELAY_PATCH_IMPL(HIGH);
+	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
 	CHECK_(esp_timer_start(timer_patch, period));
 }
 
