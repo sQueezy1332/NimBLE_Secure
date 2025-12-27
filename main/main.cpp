@@ -1,29 +1,40 @@
 #include "main.h"
 
+extern "C" void port_start_app_hook() { if(esp_reset_reason() == ESP_RST_POWERON) ets_delay_us(1000'000); }
 extern "C" void app_main() {
     main_init(); DEBUGLN(__TIMESTAMP__);
     ESP_LOGI(TAG, "Compiled: " __DATE__ "\t" __TIME__); 
-    Serial.println(ESP.getEfuseMac(), HEX);
     //read_noinit();  //0x253D7465 == crc8 //609862 //570586
     //ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());nvs_test();ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());
 #ifdef DEBUG_ENABLE
+    DEBUGLN(ESP.getEfuseMac(), HEX);
     {byte buf[64]; char str[64]; const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
     for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); };DEBUGF("\ncount = %d\n", len);
     if(len > 0){base32_encode(buf, len, str, sizeof(str));DEBUGF("%s\nTOTP = %lu\n",str,TOTPget(buf, len, 12345678));}} //885100
     //pinMode(12, OUTPUT);
-    //auto heart = esp_timer_init([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, 1000*1000);
+    //auto heart = esp_timer_init([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
     //led_init();
     //Serial.onReceive(uart_cb); //Serial.setRxTimeout(2);
 #endif
+    RELAY_DEFAULT_IMPL(); dWrite(PIN_LED, 1);//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
+   	gpio_config_t conf = { (BIT(PIN_RELAY) | BIT(PIN_LED)), GPIO_MODE_RELAY_IMPL };
+    ESP_ERROR_CHECK(gpio_config(&conf));
 #ifdef CONFIG_FACTORY_FIRMWARE
+    RELAY_PATCH_IMPL(1);
     ESP_LOGI(TAG, "Run factory firmware\n");
     wifi_ap_init();
     wifi_server_init(); return;
 #else
-    dWrite(PIN_RELAY, 1); dWrite(PIN_LED, 1);//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
-   	gpio_config_t conf = {(BIT(PIN_RELAY) | BIT(PIN_LED)), GPIO_MODE_INPUT_OUTPUT_OD };
-    gpio_config(&conf); gpio_set_drive_capability((gpio_num_t)PIN_RELAY,GPIO_DRIVE_CAP_0);
-    timer_patch = esp_timer_init(timer_patch_off_cb);
+#ifdef GENERIC_PATCHER
+    conf.pin_bit_mask = BIT(PIN_LINE); conf.mode = GPIO_MODE_INPUT;
+    ESP_ERROR_CHECK(gpio_config(&conf));
+#else
+    gpio_set_drive_capability((gpio_num_t)PIN_RELAY,GPIO_DRIVE_CAP_0);
+    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE);
+    enableInterrupt(PIN_LINE);
+    main_handle =  xTaskCreateStaticPinnedToCore(mainTask, "main", sizeof(xMainStack), NULL, 1, xMainStack, &xMainTaskBuffer, configNUM_CORES -1);//nimble_port_stop();
+#endif
+    assert(timer_patch = esp_timer_init(timer_patch_off_cb));
     nvs_read_sets();
     read_auth_data(); log_d("passkey_len %u, scan_key_len: %u\n", passkey_len, scan_key_len);//DEBUGLN(passkey);
     read_bonded_mac();
@@ -32,13 +43,6 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK_WITHOUT_ABORT(gatt_svc_init());
     ble_hs_cfg_init();
     ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",sizeof(xHostStack), NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
-    //auto heart = esp_timer_init([](void*){ update_heart_rate();send_heart_rate_notify();}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
-#ifndef GENERIC_PATCHER
-    main_handle =  xTaskCreateStaticPinnedToCore(mainTask, "main", sizeof(xMainStack), NULL, 1, xMainStack, &xMainTaskBuffer, configNUM_CORES -1);//nimble_port_stop();
-    attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE);
-    enableInterrupt(PIN_LINE);
-#endif
-    //auto addr = ESP.getEfuseMac(); print_addr((byte*)&addr);DEBUGLN();//esp_efuse_mac_get_default();
     //ble_delete_all_peers();
 #endif
 }
