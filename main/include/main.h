@@ -17,7 +17,7 @@
 #include "esp_mac.h"
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
-				#define GENERIC_PATCHER
+				#define CONFIG_GENERIC_PATCHER
 #ifdef CONFIG_FACTORY_FIRMWARE
 #include "web_server.h"
 #endif
@@ -32,7 +32,7 @@
 #define PIN_RELAY 3
 #define PIN_LINE 0//9
 #define PIN_LED 8
-#ifdef GENERIC_PATCHER
+#ifdef CONFIG_GENERIC_PATCHER
 #define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
 #define RELAY_DEFAULT_IMPL()
 #define RELAY_PATCH_IMPL(x) dWrite(PIN_RELAY, x)
@@ -109,8 +109,8 @@ decltype(sets_t::crc) crc_func(const sets_t & buf) {
 }
 
 void patch_func(uint64_t period) { 
-	if(!sets.patch) { RELAY_PATCH_IMPL(HIGH); ; nvs_write_sets(); }
-	CHECK_(esp_timer_start(timer_patch, period)); 
+	if(!sets.patch) { RELAY_PATCH_IMPL(HIGH); sets.patch = true; nvs_write_sets(); }
+	CHECK_(esp_timer_start(timer_patch, period));
 }
 
 static void timer_patch_off_cb(void *) { sets.patch = false; RELAY_PATCH_IMPL(LOW); nvs_write_sets(); }
