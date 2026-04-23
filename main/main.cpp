@@ -1,42 +1,72 @@
 #include "main.h"
+//extern "C"
+//struct esp_netif_t;
+//esp_netif_t* wifi_init_ap();
+//esp_netif_t* wifi_init_softap();
 
-extern "C" void port_start_app_hook() { if(esp_reset_reason() == ESP_RST_POWERON) ets_delay_us(1000'000); }
 extern "C" void app_main() {
-    main_init(); DEBUGLN(__TIMESTAMP__);
-    ESP_LOGI(TAG, "Compiled: " __DATE__ "\t" __TIME__); 
+    nvs_init();
+    ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
+		
     //read_noinit();  //0x253D7465 == crc8 //609862 //570586
     //ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());nvs_test();ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());
 #ifdef DEBUG_ENABLE
-    DEBUGLN(ESP.getEfuseMac(), HEX);
-    {byte buf[64]; char str[64]; const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
-    for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); };DEBUGF("\ncount = %d\n", len);
-    if(len > 0){base32_encode(buf, len, str, sizeof(str));DEBUGF("%s\nTOTP = %lu\n",str,TOTPget(buf, len, 12345678));}} //885100
-    //pinMode(12, OUTPUT);
-    //auto heart = esp_timer_init([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
-    //led_init();
+		printHeapInfo();
+	esp_log_level_set("*", ESP_LOG_DEBUG);
+	esp_log_level_set("nvs", ESP_LOG_INFO);
+	esp_log_level_set("wifi", ESP_LOG_INFO);
+	esp_log_level_set("event", ESP_LOG_INFO);
+    //DEBUGLN(ESP.getEfuseMac(), HEX);
+    totp_test();
+    //auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
+    //pinMode(12, OUTPUT);//led_init();
     //Serial.onReceive(uart_cb); //Serial.setRxTimeout(2);
+	//nvs_test();
+	//nvsErase(NULL);
 #endif
-    RELAY_DEFAULT_IMPL(); dWrite(PIN_LED, 1);//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
-   	gpio_config_t conf = { (BIT(PIN_RELAY) | BIT(PIN_LED)), GPIO_MODE_RELAY_IMPL };
+
+    RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
+   	gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL };
     ESP_ERROR_CHECK(gpio_config(&conf));
-#ifdef CONFIG_FACTORY_FIRMWARE
-    RELAY_PATCH_IMPL(1);
+    gpio_set_drive_capability((gpio_num_t)PIN_RELAY,DRIVE_CAP_IMPL);
+//#ifdef CONFIG_FACTORY_FIRMWARE
+    RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL();
     ESP_LOGI(TAG, "Run factory firmware\n");
-    wifi_ap_init();
-    wifi_server_init(); return;
-#else
+		printHeapInfo();
+	wifi_setup_default(WIFI_MODE_APSTA, WIFI_STORAGE_RAM);
+	h_netif_sta = wifi_init_sta();
+	h_netif_ap = wifi_init_ap();
+	ESP_ERROR_CHECK(esp_wifi_start());
+	ESP_LOGI(TAG, "WiFi started, waiting for connection");
+	extern bool wifi_sta_wait_conn(); 
+	if(!wifi_sta_wait_conn()) return;
+	esp_log_level_set("wifi", ESP_LOG_DEBUG);
+
+	ap_set_dns_addr(h_netif_ap,h_netif_sta);
+	{int ret =  esp_netif_set_default_netif(h_netif_sta);
+	CHECK_(esp_netif_napt_enable(h_netif_ap));
+	if(ret) { ESP_LOGE(TAG, "NAPT err 0x%X",ret); }
+	else{ ESP_LOGI(TAG, "NAPT enabled");} }
+	
+    //wifi_server_init();
+    http_server_init();
+	timer_wifi = esp_timer_new([](void*){ ESP_LOGW(TAG, "TIMER");
+		ESP_LOGI(TAG, "getFreeHeap() %lu", getFreeHeap()); esp_restart();});
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(timer_wifi, TIMER_WIFI)); ESP_LOGD(TAG,"TIMER_WIFI %llu",TIMER_WIFI);
+		printHeapInfo();
+	return;
+//#else
 #ifdef CONFIG_GENERIC_PATCHER
     conf.pin_bit_mask = BIT(PIN_LINE); conf.mode = GPIO_MODE_INPUT;
     ESP_ERROR_CHECK(gpio_config(&conf));
 #else
-    gpio_set_drive_capability((gpio_num_t)PIN_RELAY,GPIO_DRIVE_CAP_0);
     attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE);
     enableInterrupt(PIN_LINE);
     main_handle =  xTaskCreateStaticPinnedToCore(mainTask, "main", sizeof(xMainStack), NULL, 1, xMainStack, &xMainTaskBuffer, configNUM_CORES -1);//nimble_port_stop();
 #endif
-    assert(timer_patch = esp_timer_init(timer_patch_off_cb));
+    assert(timer_patch = esp_timer_new(timer_patch_off_cb));
     nvs_read_sets();
-    read_auth_data(); log_d("passkey_len %u, scan_key_len: %u\n", passkey_len, scan_key_len);//DEBUGLN(passkey);
+    read_auth_data(); ESP_LOGD(TAG, "passkey_len %u, scan_key_len: %u\n", passkey_len, scan_key_len);//DEBUGLN(passkey);
     read_bonded_mac();
     ESP_ERROR_CHECK(nimble_port_init());
     gap_init();
@@ -44,8 +74,34 @@ extern "C" void app_main() {
     ble_hs_cfg_init();
     ble_handle = xTaskCreateStaticPinnedToCore([](void*) { nimble_port_run();}, "nimble",sizeof(xHostStack), NULL, 21,xHostStack,&xHostTaskBuffer, NIMBLE_CORE);
     //ble_delete_all_peers();
-#endif
+    delay(1000);
+    #if PIN_LED_MASK
+    dWrite(PIN_LED, 1);
+    #endif
+//#endif
 }
+
+bool wifi_sta_wait_conn() {
+	EventBits_t bits = xEventGroupWaitBits(h_group_wifi, WIFI_STA_GOT_IP | WIFI_FAIL_BIT, 
+		pdFALSE, pdFALSE, portMAX_DELAY);
+
+	if (bits & WIFI_STA_GOT_IP) {
+		ESP_LOGI(TAG, "connected!" //"SSID:%s password:%s", STA_SSID, AP_PASS
+		);
+		//ap_set_dns_addr(h_netif_ap,h_netif_sta);
+		return true;
+	} else if (bits & WIFI_FAIL_BIT) {
+		ESP_LOGW(TAG, "Failed to connect");
+		xEventGroupClearBits(h_group_wifi, WIFI_FAIL_BIT);
+	} else {
+		ESP_LOGW(TAG, "? event bits: 0x%X", bits);
+	}
+	return false;
+}
+
+void wifi_timer_stop() { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_stop(timer_wifi)); }
+
+void wifi_timer_restart() { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start(timer_wifi, TIMER_WIFI)); }
 
 static void mainTask(void *) {
     for(;;) {
@@ -67,13 +123,13 @@ static void isr_handler() {
     const int now = dRead(PIN_LINE); ESP_DRAM_LOGI("ISR", "%u", now);
     if(prev_state != now) {
         prev_state = now;
-        if(sets.patch == false) { 
+        if(sets.patch == false) {
             dWrite(PIN_RELAY, now); 
         }
         else if(need_notify()) { xTaskNotifyFromISR(main_handle, NOTIFY_ALARM, eNoAction, NULL); };
-//#ifdef DEBUG_ENABLE
+    #if PIN_LED_MASK
         dWrite(PIN_LED, now);
-//#endif
+    #endif
     }
 }
 
@@ -98,7 +154,7 @@ void rand_device_name() {
     constexpr byte name_len = sizeof(DEVICE_NAME) -1;
     char* pName = const_cast<char*>(ble_svc_gap_device_name());
     pName[name_len] = ' ';
-    const uint32_t rand_num = esp_random(); log_d("%lu",rand_num);
+    const uint32_t rand_num = esp_random(); ESP_LOGD(TAG,"%lu",rand_num);
     bytes_to_str<false, 0>(&pName[name_len + 1], (byte*)&rand_num, sizeof(rand_num));
 }
 
@@ -108,18 +164,18 @@ void ble_delete_all_peers(bond_mac_s* except) {
     int num_peers;
     CHECK_VOID(ble_store_util_bonded_peers(peer_id_addrs, &num_peers, sizeof(peer_id_addrs)));
     ESP_LOGI(TAG, "num_peers %u", num_peers);
-    for(; num_peers > 0;) {
-        --num_peers; print_addr((peer_id_addrs[num_peers].val));
+    while(num_peers > 0) {
+        --num_peers; //print_addr((peer_id_addrs[num_peers].val));
         if(except && (*reinterpret_cast<uint64_t*>(except) != 0) &&
             !ble_addr_cmp(&except->arr, &peer_id_addrs[num_peers])) continue;
-        CHECK_VOID(ble_store_util_delete_peer(&peer_id_addrs[num_peers])); 
+        ble_store_util_delete_peer(&peer_id_addrs[num_peers]); 
     }
 #endif
 }
 
 bool read_bonded_mac() {
     byte crc = crc8_le(0, (byte*)&bonded_addr, 7);
-    if(bonded_addr.crc == crc)  return true;
+    if(bonded_addr.crc == crc) return true;
     bonded_addr = {};
     //bonded_addr.crc = crc8_le(0, (byte*)&bonded_addr, 7);
     return false;
@@ -132,7 +188,7 @@ void save_bonded_mac(const ble_addr_t & addr) {
 }
 
 void nvs_write_sets(nvsApi nvs) {
-	sets.crc = crc_func(sets);  log_d("%u, %u, %04X", sets.patch, sets.updated, sets.crc);
+	sets.crc = crc_func(sets);  ESP_LOGD(TAG,"%u, %u, %04X", sets.patch, sets.updated, sets.crc);
     CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
@@ -145,10 +201,10 @@ void nvs_read_sets() {
             if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
             else { /* timer_patch_off_cb((void*)1); */ }; //dont write
             if (sets.updated == 0) { img_state(true); return; } //validate partition if it is verify state
-            else { sets.updated = 0; 
-                timer_valid = esp_timer_init([](void*){ esp_restart();}); 
-                esp_timer_start_once(timer_valid, SEC*60*30);
-                goto ota; 
+            else { sets.updated = 0; //only ones
+                timer_valid = esp_timer_new([](void*){ esp_restart();}); 
+                esp_timer_start_once(timer_valid, SEC*60*30); 
+                goto ota;
             }
         } else { ESP_LOGW("crc", ""); };
     } else { CHECK_(ret); } //alarm_on(false);
@@ -172,16 +228,19 @@ void read_auth_data() {
 esp_err_t save_auth_data() {
     //extern auth_t Auth;
     if (!passkey_len && !scan_key_len) { ESP_LOGW(TAG, "!Auth"); return 0xFFFF; }
-    nvsApi handle;
+    nvsApi handle; int err = -1;
     CHECK_RET(handle.begin(NVS_SPACE_SETS, NVS_READWRITE));
     if(passkey_len) {
-        CHECK_RET(nvs_set_blob(handle, NVS_KEY_BLE_PASS, passkey, passkey_len));
+        err = nvs_set_blob(handle, NVS_KEY_BLE_PASS, passkey, passkey_len);
+        if(err != ESP_OK) {ESP_LOGE(TAG, "%d", err);}
     }
     if(scan_key_len) {
-        CHECK_RET(nvs_set_blob(handle, NVS_KEY_SCAN_DATA, scan_key, scan_key_len));
+        err = nvs_set_blob(handle, NVS_KEY_SCAN_DATA, scan_key, scan_key_len);
+        if(err != ESP_OK) {ESP_LOGE(TAG, "%d", err);}
     } //else return 0xFF00;
-    CHECK_RET(nvs_commit(handle));
-    return ESP_OK;
+    if(err == ESP_OK) 
+        return nvs_commit(handle);
+    return err;
 }
 
 void set_boot_partition(const esp_partition_subtype_t type) {
@@ -199,7 +258,10 @@ void set_boot_partition(const esp_partition_subtype_t type) {
 void parse_adv_cb(cbyte* data, byte len) {
     //cbyte len = *data, type = data[1], size = scan_key_len;
     if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
-        ESP_LOGW(TAG, "PASS!"); ble_gap_disc_cancel(); adv_init();
+        //extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
+        ESP_LOGW(TAG, "PASS!"); 
+        RELAY_2_PATCH_IMPL();
+        ble_gap_disc_cancel(); adv_init();
     }
     /* if(type == COMPLETE_NAME  || type == SHORT_NAME ) {
         if ((len - 1 == size) && !memcmp(data +1, scan_key, size)) {
@@ -211,30 +273,38 @@ void parse_adv_cb(cbyte* data, byte len) {
 
 void parse_rx_data(const os_mbuf *buf) {
     extern ble_gap_conn_desc desc;
-    if(buf->om_len != 4) return;
-    //else if(buf->om_len == 8){} 
-    auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
+    enum { 
+        OFFSET = DEF_CMD_OFFSET,
+        OTA_KEY ,
+        RESTART_KEY,
+        VALID_KEY,
+        SAVE_MAC,
+        DELETE_ALL_PEERS,
+        NVS_ERASE_ALL,
+        NVS_ERASE_ALL_EXC,
+    };
+    if(buf->om_len != 5) return;
+    if(*reinterpret_cast<uint32_t*>(buf->om_data) != DEF_CMD_PASS) return;
+    //auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
+    auto val = buf->om_data[4];
     switch (val) {
-	case DEF_OTA_KEY: ESP_LOGI("OTA", "");//ESP_ERROR_CHECK(nimble_port_stop());
+	case OTA_KEY: ESP_LOGI("OTA", "");//ESP_ERROR_CHECK(nimble_port_stop());
         set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY); ESP_LOGI(TAG, "reboot to FACTORY...");
-    case DEF_RESTART_KEY: ESP_LOGI("RESTART", "");
-		//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
-		esp_restart(); break;
-    case DEF_VALID_KEY: ESP_LOGI("VALID", "");
+    case RESTART_KEY: ESP_LOGI("RESTART", ""); esp_restart(); break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
+    case VALID_KEY: ESP_LOGI("VALID", "");
         if(timer_valid) { esp_timer_stop(timer_valid); esp_timer_delete(timer_valid);}
 		esp_ota_mark_app_valid_cancel_rollback(); break;
-    //case 1234: set_cts_unix(val);
-    case DEF_DELETE_ALL_PEERS: ble_delete_all_peers(); break;
-    case DEF_NVS_ERASE_ALL: nvsErase("phy"); break;
-    case DEF_NVS_ERASE_ALL + 1: nvsErase(nullptr); break;
-    case DEF_SAVE_MAC:  save_bonded_mac(desc.peer_id_addr); break;
-    case DEF_PRINT_KEY: DEBUG(get_task_list()); break;
-    default: ESP_LOGW("key", "0x%08X", val);
+    case SAVE_MAC: save_bonded_mac(desc.peer_id_addr); break;
+    case DELETE_ALL_PEERS: ble_delete_all_peers(); break;
+    case NVS_ERASE_ALL: nvsErase("phy"); break;
+    case NVS_ERASE_ALL_EXC: nvsErase(nullptr); break;
+    case OFFSET: DEBUG(get_task_list().c_str()); break;
+    default: ESP_LOGW("key", "0x%02X", val);
     }
 }
 
-void get_task_list(String& str) {
-	size_t num = uxTaskGetNumberOfTasks(), heap = ESP.getFreeHeap(); log_d("NumberOfTasks = %u", num);
+void get_task_list(String& str) {/*
+	size_t num = uxTaskGetNumberOfTasks(), heap = ESP.getFreeHeap(); ESP_LOGD(TAG,"NumberOfTasks = %u", num);
 	if (!str.reserve((num * 32 + 16) * (configGENERATE_RUN_TIME_STATS ? 2 : 1))) return;
 	char* const ptr = str.begin(); 
 	vTaskList(ptr);
@@ -242,17 +312,17 @@ void get_task_list(String& str) {
 #if configGENERATE_RUN_TIME_STATS
 	vTaskGetRunTimeStats(&ptr[num]); num += strlen(&ptr[num]);
 #endif
-    reinterpret_cast<uint32_t*>(&str)[2] = num;
+    reinterpret_cast<uint32_t*>(&str)[2] = num;*/
 }
 
-template <bool big_endian, char separ> void bytes_to_str(char* ptr, const byte* buf, byte data_size) {
+template <bool big_endian, char separ> void bytes_to_str(char* ptr, cbyte* buf, size_t data_size) {
     if(data_size == 0) return; 
-    byte i, num, shift, nibble; char inc; 
+    int i; char inc; 
     if(big_endian){ i = 0; --data_size; inc = 1;}
     else { i = data_size-1; data_size = 0; inc = -1;}
 	for (;;i += inc) {
-		for (shift = 4, num = buf[i];; shift = 0) {
-			nibble = (num >> shift) & 0xF;
+		for (int shift = 4;; shift = 0) {
+			byte nibble = (buf[i] >> shift) & 0xF;
 			*ptr++ = nibble < 10 ? nibble ^ 0x30 : nibble + ('A' - 10);
 			if (shift == 0) break;
 		} 
@@ -263,7 +333,7 @@ template <bool big_endian, char separ> void bytes_to_str(char* ptr, const byte* 
 }
 
 void strtoB(cch* ptr, byte *buf, size_t & data_size, size_t buf_len) { 
-	//{size_t str_len = str.length(), hex_len = (str_len + 1) / 2; log_d("hex_len = %u", hex_len);
+	//{size_t str_len = str.length(), hex_len = (str_len + 1) / 2; ESP_LOGD(TAG,"hex_len = %u", hex_len);
 	//if (hex_len < 4 || hex_len > buf_len) return false;}
 	byte i = 0;
 	//byte* _buf = (byte*)realloc(buf, hex_len); if (_buf == NULL) return false; buf = _buf;
@@ -296,7 +366,8 @@ rdy:            buf[i] = result;
 }
 
 void set_ble_device_name() {
-    const size_t name_len = sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1; static_assert(name_len >= 7);
+    constexpr size_t name_len = sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1;
+    static_assert(name_len >= 7); static_assert(!MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC));
     char* name = const_cast<char*>(ble_svc_gap_device_name()); byte mac[8];
     *(name += name_len) = '-';
     CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
@@ -304,21 +375,23 @@ void set_ble_device_name() {
 }
 
 uint32_t generate_salt() {
-    static uint32_t last_change = __INT32_MAX__, salt; //ESP_LOGD(TAG, "change_device_name()");
+    static uint32_t last_change = __INT32_MAX__; 
+    static time_t salt; //ESP_LOGD(TAG, "change_device_name()");
     uint32_t sec = xTaskGetTickCount();
-    if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) { 
-        last_change = sec;
+    if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) {
 #if !_ESP_LOG_ENABLED(3)
-        ble_delete_all_peers(&bonded_addr);
+        if(last_change != __INT32_MAX__)
+            { ble_delete_all_peers(&bonded_addr); }
 #endif
+        last_change = sec;
         salt = time(NULL); 
-        if(salt < 1766600000) salt = 0;
-        pincode = TOTPget(passkey, passkey_len, salt); ESP_LOGI(TAG, "NEW PIN: %lu\nTime: %lu", pincode, salt);
+        //if(salt < 1766600000) salt = 0;
+        pincode = TOTPget(passkey, passkey_len, salt); ESP_LOGI(TAG, "NEW PIN: %lu\tTime: %lu", pincode, salt);
     }
     return salt;
 }
 
-uint32_t TOTPget(const byte* key, byte key_len, uint32_t time) {
+uint32_t TOTPget(const byte* key, byte key_len, time_t time) {
     return HOTPget(key, key_len, time / TOTP_TIMESTEP);
 }
 
@@ -327,7 +400,7 @@ uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt) {
     byte hash[20];  uint32_t result;
     swap_in_place(pSalt, salt_len); //salt = ntohll(salt);
     int ret = hmac_hash(hash, key, key_len, pSalt, salt_len); 
-    if(ret != 0) return 0;
+    if(ret != 0) { ESP_LOGE(TAG, "HOTPget %d", ret); return 0; }
 	for (byte i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
 		reinterpret_cast<byte*>(&result)[3 - i] = hash[offset + i];
 	}
@@ -337,13 +410,14 @@ uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt) {
 
 int hmac_hash(byte* hash, const byte* key, size_t key_len, const byte* data, size_t data_len, mbedtls_md_type_t t) {
     mbedtls_md_context_t ctx {/*init*/};
-    CHECK_RET(mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(t), 1));
+    CHECK_RET(mbedtls_md_hmac_setup(&ctx, mbedtls_md_info_from_type(t)));
     CHECK_RET(mbedtls_md_hmac_starts(&ctx, key, key_len));
     CHECK_RET(mbedtls_md_hmac_update(&ctx, data,  data_len));
     CHECK_RET(mbedtls_md_hmac_finish(&ctx, hash));
     mbedtls_md_free(&ctx);
     return 0;
 }
+
 
 /**
  * Base32 decoder
@@ -354,9 +428,7 @@ int hmac_hash(byte* hash, const byte* key, size_t key_len, const byte* data, siz
  * @return -1 if failed, or length decoded
  */
 int base32_decode(const char* encoded, uint8_t* result, size_t buf_len) {
-    if (!encoded || !result) {
-        ESP_LOGE(TAG, "String or buffer are null"); return -1;
-    }
+    if (!encoded || !result) { return -1; }
     // Base32's overhead must be at least 1.4x than the decoded bytes, so the result output must be bigger than this
     /* size_t expect_len = ceil(strlen(encoded) / 1.6);
     if (buf_len < expect_len) {
@@ -380,10 +452,7 @@ int base32_decode(const char* encoded, uint8_t* result, size_t buf_len) {
             ch = (ch & 0b11111) - 1;
         } else if (ch >= '2' && ch <= '7') {
             ch -= '2' - 26;
-        } else {
-            ESP_LOGE(TAG, "Invalid Base32!");
-            return -1;
-        }
+        } else { return -2; }
         buffer |= ch;
         bits_left += 5;
         if (bits_left >= 8) {
@@ -420,7 +489,7 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 }
 
 void read_noinit() {
-    log_d("%08X", *reinterpret_cast<uint32_t*>(&sets));
+    ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets));
     if(crc16_le(0, (byte*)&sets, 2) == sets.crc) {
         if(!sets.updated) { img_state(true); } //validate partition if it is verify state
     } else { sets = {}; ESP_LOGW("crc", "");}; 
@@ -430,5 +499,5 @@ void read_noinit() {
 
 void write_noinit(byte val) {
     sets.updated = val;
-    sets.crc = crc16_le(0, (byte*)&sets, 2); log_d("%u, %u, %04X", sets.patch, sets.updated, sets.crc);
+    sets.crc = crc16_le(0, (byte*)&sets, 2); ESP_LOGD(TAG,"%u, %u, %04X", sets.patch, sets.updated, sets.crc);
 }
