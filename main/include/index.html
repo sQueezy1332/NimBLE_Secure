@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+		<title>ESP32 OTA</title>
+		<script>
+			function startUpload() {
+				const otafile = document.getElementById("otaIn").files;
+				if (!otafile.length) {alert("No file selected!");return}
+				document.getElementById("otaIn").disabled = true;
+				document.getElementById("upload").disabled = true;
+				const file = otafile[0];
+				if(!file.name.endsWith('.bin')) {alert("Not a .bin file");return}
+				const xhr = new XMLHttpRequest();
+				xhr.onreadystatechange = function() {
+					if (xhr.readyState == 4) {
+						if (xhr.status == 200) {
+							document.open();
+							document.write(xhr.responseText);
+							document.close()
+						} else if (xhr.status == 0) {
+							alert("Server closed the connection abruptly!");
+							location.reload()
+						} else {
+							alert(xhr.status + " Error!\n" + xhr.responseText);
+							location.reload()
+						}
+					}
+				}
+				xhr.upload.onprogress = function(e) {
+					let progress = document.getElementById("progress");
+					progress.textContent = "Progress: " + (e.loaded / e.total * 100).toFixed(0) + "%";
+				}
+				xhr.open("POST", "/update/start", true);
+				xhr.send(file)
+			}
+			function reboot() {
+				if (confirm("Reboot ESP?")) {
+            		fetch("/restart")
+                	.catch(err => alert(err.message));
+        		}
+        	}
+		</script>
+	</head>
+	<body>
+		<h1>ESP32 OTA Firmware Update</h1>
+		<div>
+			<label for="otaIn">Firmware file:</label>
+			<input type="file" id="otaIn" accept=".bin"/>
+		</div>
+		<div>
+			<p><button id="upload" type="button" onclick="startUpload()">Upload</button></p>
+		</div>
+		<div>
+		<br><br><button id="reboot" type="button" onclick="reboot()">Reboot</button>
+		</div>
+		<div id="progress"></div>
+	</body>
+</html>
