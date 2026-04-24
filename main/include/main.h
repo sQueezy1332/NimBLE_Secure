@@ -112,6 +112,7 @@ template <bool = false, char = 0> void bytes_to_str(char* dest, cbyte* src, size
 void bytes_to_str_bigend(char* dest, cbyte* src, size_t data_size) { bytes_to_str<true, ' '>(dest, src, data_size) ; };
 //void generate_salt();
 void ble_delete_all_peers(bond_mac_s* = nullptr);
+bool wifi_sta_wait_conn(); 
 
 bool read_bonded_mac();
 void save_bonded_mac(const ble_addr_t &);
@@ -132,8 +133,6 @@ int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt);
 uint32_t TOTPget(const byte* key, byte key_len, time_t time = time(NULL));
-
-bool wifi_sta_wait_conn(); 
 
 static void get_task_list(String& str);
 String get_task_list() { String str; get_task_list(str); return str; }
@@ -313,5 +312,3 @@ void totp_test() {
 			str, totp, now, TOTP_TIMESTEP);
 	} 
 }
-
-//extern void wifi_init_ap();
