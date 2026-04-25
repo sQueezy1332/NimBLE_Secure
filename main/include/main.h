@@ -24,7 +24,7 @@
 #include "wifi_api.h"
 #include "web_server.h"
 //#endif
-#include "credentials.h"
+
 #include "http_server.h"
 //#define NO_PARSE_KEY
 //#define TAG "MAIN"
@@ -128,11 +128,10 @@ void update_finish_cb() { sets.updated = 1; nvs_write_sets(); };
 void set_boot_partition(const esp_partition_subtype_t);
 void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 
-int hmac_hash(byte*, const byte*, size_t, const byte*, size_t, mbedtls_md_type_t = MBEDTLS_MD_SHA1);
 int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
-uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt);
-uint32_t TOTPget(const byte* key, byte key_len, time_t time = time(NULL));
+uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
+uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
 static void get_task_list(String& str);
 String get_task_list() { String str; get_task_list(str); return str; }
@@ -261,12 +260,13 @@ void nvsErase(cch* except) {
 	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
 	while (ret == ESP_OK) {
 		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
-		DEBUGF("space '%s'\tkey '%s'\ttype '%d'\n", entry.namespace_name, entry.key, entry.type);
-		nvsApi nvs;
+		ESP_LOGI(TAG, "space '%s'\tkey '%s'\ttype '%d'\n", entry.namespace_name, entry.key, entry.type);
+		nvsApi nvs; //types: blob 66, str 33
 		if(nvs.begin(entry.namespace_name, NVS_READWRITE) == ESP_OK) {
 			//if(*reinterpret_cast<uint32_t*>(entry.namespace_name) != *reinterpret_cast<const uint32_t*>("phy"))
-			if(except && !strcmp(entry.namespace_name, except)) continue;
+			if(except && !strcmp(entry.namespace_name, except)) continue; 
 			nvs_erase_all(nvs);
+			nvs_commit(nvs);
 		}
 		ret = nvs_entry_next(&it);
 	}
