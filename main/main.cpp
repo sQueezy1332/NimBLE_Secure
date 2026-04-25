@@ -391,33 +391,22 @@ uint32_t generate_salt() {
     return salt;
 }
 
-uint32_t TOTPget(const byte* key, byte key_len, time_t time) {
+uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
     return HOTPget(key, key_len, time / TOTP_TIMESTEP);
 }
 
-uint32_t HOTPget(const byte* key, byte key_len, uint64_t salt) {
-    const byte salt_len = sizeof(salt); byte* const pSalt = reinterpret_cast<byte*>(&salt);
-    byte hash[20];  uint32_t result;
-    swap_in_place(pSalt, salt_len); //salt = ntohll(salt);
-    int ret = hmac_hash(hash, key, key_len, pSalt, salt_len); 
+uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt) {
+    uint8_t* const pSalt = reinterpret_cast<uint8_t*>(&salt);
+    uint8_t hash[20];  uint32_t result;
+    swap_in_place(pSalt, sizeof(salt)); //salt = ntohll(salt);
+	int ret = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1),key,key_len,pSalt,sizeof(salt), hash);
     if(ret != 0) { ESP_LOGE(TAG, "HOTPget %d", ret); return 0; }
-	for (byte i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
-		reinterpret_cast<byte*>(&result)[3 - i] = hash[offset + i];
+	for (int i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
+		reinterpret_cast<uint8_t*>(&result)[3 - i] = hash[offset + i];
 	}
 	result = (result & 0x7FFFFFFF) % 1000000;
 	return result;
 }
-
-int hmac_hash(byte* hash, const byte* key, size_t key_len, const byte* data, size_t data_len, mbedtls_md_type_t t) {
-    mbedtls_md_context_t ctx {/*init*/};
-    CHECK_RET(mbedtls_md_hmac_setup(&ctx, mbedtls_md_info_from_type(t)));
-    CHECK_RET(mbedtls_md_hmac_starts(&ctx, key, key_len));
-    CHECK_RET(mbedtls_md_hmac_update(&ctx, data,  data_len));
-    CHECK_RET(mbedtls_md_hmac_finish(&ctx, hash));
-    mbedtls_md_free(&ctx);
-    return 0;
-}
-
 
 /**
  * Base32 decoder
