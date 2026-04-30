@@ -12,7 +12,7 @@
 /* Defines */
 #define DEVICE_NAME CONFIG_IDF_TARGET //CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME)-1) 
-#define TIMER_ADV  (1000 * 60 * 5) //min /* BLE_HS_FOREVER */
+#define TIMER_ADV  (1000 * 60 * 10) //min /* BLE_HS_FOREVER */
 #define BLE_GAP_APPEARANCE 0x0541 //0x0200 BLE_GAP_APPEARANCE_GENERIC_TAG
 #define BLE_GAP_URI_PREFIX_HTTPS 0x17
 #define BLE_GAP_LE_ROLE_PERIPHERAL 0x00
@@ -25,13 +25,7 @@
 #define UUID128_DATA	0x21
 #define SHORT_NAME	    0x08
 #define COMPLETE_NAME	0x09
-#if _ESP_LOG_ENABLED(3) //CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL
-#define NIMLOG(msg, ...) printf((msg), ##__VA_ARGS__) //static_assert(0)
-#define SCAN_PASSIVE 0 
-#else
-#define NIMLOG(msg, ...) 
-#define SCAN_PASSIVE 1
-#endif
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,31 +34,40 @@ extern "C" {
 void ble_store_config_init(void);
 const char* ble_svc_gap_device_name(void);
 int ble_svc_gap_device_name_set(const char *);
+void ble_store_config_conf_init();
 struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 
-struct ble_gap_event; struct os_mbuf;
-union ble_store_value; union ble_store_key;
+struct ble_gap_event; struct os_mbuf; struct ble_gatt_register_ctxt;
+union ble_store_key; union ble_store_value; 
 #ifdef __cplusplus
 }
 #endif
 
-
-
+void ble_hs_cfg_init();
 int gap_init();
 void host_sync_cb();
-bool is_connection_encrypted(uint16_t);
 void ble_scan_adv();
 void adv_init();
+int save_bonding(uint16_t conn_handle);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool is_connection_encrypted(uint16_t);
+int gatt_svr_subscribe_cb(const ble_gap_event *);
+void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);
+void clear_characteristic();
+void set_encryption();
+void impl_io_on();
+void impl_io_off();
+#ifdef __cplusplus
+}
+#endif
 
 extern uint32_t get_pincode();
 extern void parse_adv_cb(const uint8_t*, uint8_t);
-extern void impl_io_on();
-extern void impl_io_off();
-extern int gatt_svr_subscribe_cb(const ble_gap_event *);
-extern void clear_characteristic();
-extern void set_encryption();
 extern uint32_t generate_salt();
 extern void print_task_list();
 extern void set_ble_device_name();
+extern void unpatch_cb();
 //extern void start_adv();
-
-extern void parse_rx_data(const os_mbuf *);
+extern void parse_rx_data(const ble_gap_event* event);
