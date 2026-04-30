@@ -4,6 +4,7 @@
 #include "driver/gptimer.h"
 #include "nvs_flash.h"
 #include "esp_ota_ops.h"
+#include "esp_mac.h"
 #include "esp_log.h"
 
 #if CONFIG_ARDUINO_ISR_IRAM
@@ -104,9 +105,12 @@ esp_ota_img_states_t img_state(bool valid) {
 	esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
 	esp_err_t ret = esp_ota_get_state_partition(cur_part, &ota_state);
 	if(ret) { ESP_LOGE("ota", "get_state 0x%x", ret); }
- 	ESP_LOGI("ota", "%s state: %lu%s", cur_part->label, ota_state, 
+ 	ESP_EARLY_LOGI("ota", "%s state: %lu%s", cur_part->label, ota_state, 
 		ota_state == ESP_OTA_IMG_PENDING_VERIFY ? " PENDING_VERIFY" : "");
-	if(valid) { ret = esp_ota_mark_app_valid_cancel_rollback(); ESP_LOGI("ota", "app_valid 0x%x", ret); }
+	if(valid && (ota_state == ESP_OTA_IMG_PENDING_VERIFY)) { 
+		ret = esp_ota_mark_app_valid_cancel_rollback(); 
+		ESP_EARLY_LOGI("ota", "app_valid 0x%x", ret);
+	}
 	return ota_state;
 }
 
@@ -167,4 +171,11 @@ uint64_t gptimer_read(gptimer_handle_t handle) {
 	__unused esp_err_t ret = gptimer_get_raw_count(handle, &value);
 	if(ret) { return 0; }
 	return value;
+}
+
+
+uint64_t getEfuseMac() { 
+	uint64_t mac = 0LL; 
+	esp_efuse_mac_get_default((uint8_t *)(&mac)); 
+	return mac; 
 }
