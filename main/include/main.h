@@ -7,25 +7,29 @@
 #include "esp_main.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
-#include "esp_random.h"
+//#include "esp_random.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/md.h"
 #include "rom/crc.h"
+//#include "nimble/nimble_port_freertos.h" 
+#include "nimble/nimble_port.h"
+#include "host/ble_hs.h"
+//#include "host/util/util.h"
 #include "gap.h"
 #include "gatt_svc.h"
-#include "heart_rate.h"
+#define HEART_RATE_PERIOD (2000 * 1000)
 //#include "led.h"
-#include "common.h"
+//#include "common.h"
+
 #include "esp_mac.h"
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
 				//#define CONFIG_GENERIC_PATCHER
 //#ifdef CONFIG_FACTORY_FIRMWARE
 #include "wifi_api.h"
-#include "web_server.h"
+#include "http_server.h"
 //#endif
 
-#include "http_server.h"
 //#define NO_PARSE_KEY
 //#define TAG "MAIN"
 static const char* TAG = "MAIN";
@@ -71,15 +75,15 @@ static const char* TAG = "MAIN";
 	#define RELAY_2_UNPATCH_IMPL()
 #endif
 using String = std::string;
-typedef struct { byte patch , updated , dummy;  uint8_t crc; } sets_t;
+typedef struct { byte patch , updated , valid;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
 
 StackType_t xMainStack[4*1024] , xHostStack[NIMBLE_HS_STACK_SIZE]; //static_assert(configTIMER_TASK_STACK_DEPTH > 3000);
 StaticTask_t xMainTaskBuffer , xHostTaskBuffer;
-TaskHandle_t main_handle, ble_handle;
+TaskHandle_t h_main_task, h_nimble_task;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
-esp_timer_handle_t timer_patch, timer_valid;
+esp_timer_handle_t timer_patch;
 __unused esp_netif_t* h_netif_sta;
 __unused esp_netif_t* h_netif_ap;
 byte passkey[32] = DEF_BLE_PASS_BASE32;
@@ -95,11 +99,12 @@ static struct bond_mac_s {
 	ble_addr_t arr;
 	byte crc;
 } bonded_addr __attribute__((section(".noinit." "1")));
+static_assert(sizeof(bond_mac_s) == 8);
 
+static void wifi_init();
 __unused static void mainTask(void *);
 //__unused static void nimble_host_task(void *);
-__unused static void ble_hs_cfg_init();
-extern "C" void ble_store_config_init(void);
+
 //extern void set_cts_unix(time_t now);
 static void patch_func(uint64_t = TIMER_PATCH);
 
@@ -115,7 +120,7 @@ void ble_delete_all_peers(bond_mac_s* = nullptr);
 bool wifi_sta_wait_conn(); 
 
 bool read_bonded_mac();
-void save_bonded_mac(const ble_addr_t &);
+//esp_err_t save_bonded_mac(const ble_addr_t &);
 void read_noinit();
 void write_noinit(byte val);
 void nvs_read_sets();
@@ -149,10 +154,10 @@ void patch_func(uint64_t period) {
 	CHECK_(esp_timer_start(timer_patch, period));
 }
 
-void unpatch_hook() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } }
+void unpatch_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } }
 
 void timer_patch_off_cb(void *) { 
-    RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); 
+    RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
     sets.patch = false; nvs_write_sets();
 	//ble_gap_terminate();
 }
@@ -311,4 +316,20 @@ void totp_test() {
 		ESP_LOGD(TAG, "%s\nTOTP = %lu; time = %ld; TOTP_TIMESTEP = %lu\n",
 			str, totp, now, TOTP_TIMESTEP);
 	} 
+}
+
+bool wifi_sta_wait_conn() {
+	EventBits_t bits = xEventGroupWaitBits(h_group_wifi, WIFI_STA_GOT_IP | WIFI_FAIL_BIT, 
+		pdFALSE, pdFALSE, portMAX_DELAY);
+
+	if (bits & WIFI_STA_GOT_IP) {
+		ESP_LOGI(TAG, "Connected!");
+		return true;
+	} else if (bits & WIFI_FAIL_BIT) {
+		ESP_LOGW(TAG, "Failed to connect");
+		xEventGroupClearBits(h_group_wifi, WIFI_FAIL_BIT);
+	} else {
+		ESP_LOGW(TAG, "? event bits: 0x%X", bits);
+	}
+	return false;
 }
