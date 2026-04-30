@@ -93,7 +93,6 @@ byte scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <
 //static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
 static sets_t sets = {};
-__unused esp_err_t update_error;
 
 static struct bond_mac_s {
 	ble_addr_t arr;
