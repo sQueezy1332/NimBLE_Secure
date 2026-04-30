@@ -10,7 +10,8 @@
 #define ARDUINO_USB_MODE 1
 #endif
 #endif 
-
+//ESP_ROM_HAS_NEWLIB_NANO_FORMAT //627063
+//ESP_ROM_HAS_NEWLIB_NORMAL_FORMAT //643633
 #include "nvs_flash.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
@@ -18,6 +19,9 @@
 #include "esp_check.h"
 //#include "esp_task_wdt.h"
 
+#if defined (CONFIG_LIBC_NEWLIB_NANO_FORMAT) && (defined CONFIG_LIBC_NEWLIB_NANO_FORMAT)
+#pragma message "NEWLIB_NANO_FORMAT" //~16,570 bytes smaller
+#endif
 #ifdef DEBUG_ENABLE
 #pragma message "DEBUG_ENABLE"
 #if ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE  //Serial used from Native_USB_CDC | HW_CDC_JTAG
@@ -36,9 +40,10 @@
 #define DEBUGF(x, ...)
 #endif // DEBUG_ENABLE
 #define FUN __FUNCTION__
+#define FUNC_ADDRESS (esp_cpu_get_call_addr((intptr_t)__builtin_return_address(0)))
 #define CHECK_(x) ESP_ERROR_CHECK_WITHOUT_ABORT(x)
-#define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","")
-#define CHECK_VOID(x) ESP_RETURN_VOID_ON_ERROR(x,"","")
+#define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","0x%08x",FUNC_ADDRESS)
+#define CHECK_VOID(x) ESP_RETURN_VOID_ON_ERROR(x,"","0x%08x",FUNC_ADDRESS)
 #define uS() esp_timer_get_time()
 #define delayUntil(prev, tmr) vTaskDelayUntil((prev),pdMS_TO_TICKS(tmr))
 #define SEC (1000000ULL)
@@ -73,6 +78,8 @@ gptimer_handle_t gptimer_init(uint64_t value, gptimer_alarm_cb_t func, bool relo
 esp_err_t gptimer_restart(gptimer_handle_t handle);
 uint64_t gptimer_read(gptimer_handle_t handle);
 
+uint64_t getEfuseMac();
+
 void nvs_init();
 esp_ota_img_states_t img_state(bool valid = false);
 #ifdef __cplusplus
@@ -87,7 +94,7 @@ inline uint32_t getMinFreeHeap() { return heap_caps_get_minimum_free_size(MALLOC
 
 inline uint32_t getMaxAllocHeap() { return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL); }
 
-inline void printHeapInfo() { heap_caps_print_heap_info(MALLOC_CAP_INTERNAL); } 
+inline void printHeapInfo() { heap_caps_print_heap_info(MALLOC_CAP_INTERNAL); }
 
 class nvsApi {
 private: nvs_handle_t _handle = 0;
