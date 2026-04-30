@@ -5,9 +5,11 @@
  */
 /* Includes */
 //#include "common.h"
-#include "heart_rate.h"
+//#include "heart_rate.h"
+#include "esp_random.h"
+#include <stdint.h>
 /* Private variables */
-static volatile uint32_t heart_rate;
+uint32_t heart_rate;
 
 /* Public functions */
 uint8_t get_heart_rate(void) { return heart_rate; }
@@ -15,4 +17,3 @@ uint8_t get_heart_rate(void) { return heart_rate; }
 void update_heart_rate(void) { heart_rate = esp_random();
     //heart_rate = 60 + (uint8_t)(esp_random() % 21); 
 }
-
