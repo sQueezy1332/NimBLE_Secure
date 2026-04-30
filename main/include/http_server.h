@@ -122,7 +122,7 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
 	extern const char config_html_start[] asm("_binary_config_html_gz_start");
 	extern const char config_html_end[] asm("_binary_config_html_gz_end");
 	const size_t length = config_html_end - config_html_start;
-	ESP_LOGD("config.html","%lu  start: %p end: %p", length, config_html_start, config_html_end);
+	ESP_LOGD(STAG, "html size %lu", length);
 	httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 	int ret = httpd_resp_send(req, config_html_start, length);
 	if(ret) { ESP_LOGE(STAG, "0x%X", ret); } 
@@ -131,21 +131,21 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
 
 static esp_err_t reset_handler(httpd_req_t *req) {
 	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
-	static const char content[] = "esp_restart()";
+	static const char str[] = "esp_restart()";
 	esp_err_t ret = esp_timer_start(timer_wifi, 1000*100);
 	httpd_resp_set_status(req, !ret ? HTTPD_200 : HTTPD_500);
     httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
-   	httpd_resp_send(req, content, sizeof(content) - 1);
+   	httpd_resp_send(req, str, sizeof(str) - 1);
 	return ret;
 }
 
 static esp_err_t valid_handler(httpd_req_t *req) {
 	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
-	static const char content[] = "esp_ota_mark_app_valid_cancel_rollback()";
+	static const char str[] = "esp_ota_mark_app_valid_cancel_rollback()";
 	esp_err_t ret = esp_ota_mark_app_valid_cancel_rollback();
 	httpd_resp_set_status(req, !ret ? HTTPD_200 : HTTPD_500); 
     httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
-   	httpd_resp_send(req, content, sizeof(content) - 1);
+   	httpd_resp_send(req, str, sizeof(str) - 1);
 	return ret;
 }
 
