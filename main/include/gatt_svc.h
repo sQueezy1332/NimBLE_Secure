@@ -15,11 +15,7 @@
 extern "C" {
 #endif
 struct ble_gap_event; struct ble_gatt_register_ctxt;
-#ifdef __cplusplus
-}
-#endif
-
-
+void gatt_svc_init(void);
 /* Public function declarations */
 
 //void clear_characteristic();
@@ -34,12 +30,12 @@ void send_heart_rate_notify(void);
  *      - Characteristic register event
  *      - Descriptor register event
  */
-void gatt_svr_register_cb(ble_gatt_register_ctxt *, void *);
+void gatt_svr_register_cb(struct ble_gatt_register_ctxt *, void *);
 /*
  *  GATT server subscribe event callback
  *      1. Update heart rate subscription status
  */
-int gatt_svr_subscribe_cb(ble_gap_event *event);
+int gatt_svr_subscribe_cb(const struct ble_gap_event *event);
 /*
  *  GATT server initialization
  *      1. Initialize GATT service
@@ -47,10 +43,10 @@ int gatt_svr_subscribe_cb(ble_gap_event *event);
  *      3. Add GATT services to server
  */
 
-int gatt_svc_init(void);
-
 extern bool is_connection_encrypted(uint16_t conn_handle);
 extern void impl_io_on();
 extern void impl_io_off();
 extern uint8_t impl_io_get();
-
+#ifdef __cplusplus
+}
+#endif
