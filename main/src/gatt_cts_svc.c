@@ -61,7 +61,7 @@ static const ble_uuid16_t CHR_UUID16_REF_TIME_INFO = BLE_UUID16_INIT(BLE_SVC_CTS
 static const ble_uuid16_t CHR_UUID16_DEVICE_TIME = BLE_UUID16_INIT(DEVICE_TIME_CHR);
 
 __NOINIT_ATTR static time_t last_updated;
-__NOINIT_ATTR static time_t last_updated_crc;	
+__NOINIT_ATTR static time_t last_updated_crc;
 __NOINIT_ATTR static uint8_t adjust_reason;
 
 static const struct ble_gatt_svc_def ble_svc_cts_defs[] = { 
@@ -113,9 +113,9 @@ void gatt_cts_service_init() {
 void set_cts_unix(time_t now) {
     struct timeval64 tv_now = {.tv_sec = now };
     settimeofday((struct timeval *)&tv_now, NULL);
+	adjust_reason = MANUAL_TIME_UPDATE_MASK;
     last_updated = now;//gettimeofday(&last_updated,/*  &tmz */NULL);  /* set the last updated */
 	last_updated_crc = last_updated + adjust_reason;
-    adjust_reason = MANUAL_TIME_UPDATE_MASK; 
 	ESP_LOGI(TAG, "set_cts_unix %lu", now);
 }
 
