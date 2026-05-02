@@ -1,5 +1,6 @@
 #pragma once
 /* STD APIs */
+#define _WANT_USE_LONG_TIME_T
 //#include <assert.h>
 //#include <stdbool.h>
 //#include <stdio.h>
@@ -13,12 +14,13 @@
 /* FreeRTOS APIs */
 //#include <freertos/FreeRTOS.h>
 //#include <freertos/task.h>
-#define _WANT_USE_LONG_TIME_T
+
 /* NimBLE stack APIs */
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
 //#include "nimble/ble.h"
+#include "modlog/modlog.h"
 
 #if _ESP_LOG_ENABLED(3)
 #define NIMLOG(msg, ...) esp_rom_printf((msg), ##__VA_ARGS__)
