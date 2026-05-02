@@ -105,7 +105,7 @@ void gatt_cts_service_init() {
     CHECK_(ble_gatts_add_svcs(ble_svc_cts_defs));
 	setenv("TZ", "MSK-3", 1);
 	tzset();
-	if(last_updated != (last_updated_crc - adjust_reason)) 
+	if(last_updated != (last_updated_crc - adjust_reason - 1)) 
 	{last_updated_crc = last_updated = 0; adjust_reason = 0;}
 	ESP_LOGI(TAG, "last_updated %lu", last_updated);
 }
@@ -115,7 +115,7 @@ void set_cts_unix(time_t now) {
     settimeofday((struct timeval *)&tv_now, NULL);
 	adjust_reason = MANUAL_TIME_UPDATE_MASK;
     last_updated = now;//gettimeofday(&last_updated,/*  &tmz */NULL);  /* set the last updated */
-	last_updated_crc = last_updated + adjust_reason;
+	last_updated_crc = last_updated + adjust_reason + 1;
 	ESP_LOGI(TAG, "set_cts_unix %lu", now);
 }
 
@@ -133,7 +133,7 @@ void set_current_time(struct ble_svc_cts_curr_time *ctime) {
     settimeofday((struct timeval *)&tv_now, NULL);
 	adjust_reason = ctime->adjust_reason; 
     last_updated = tv_now.tv_sec;  //gettimeofday(&last_updated, NULL);
-	last_updated_crc = last_updated + adjust_reason;
+	last_updated_crc = last_updated + adjust_reason + 1;
 	ESP_LOGI(TAG, "%s tv_now %lu", __FUNCTION__, tv_now.tv_sec);
 }
 
