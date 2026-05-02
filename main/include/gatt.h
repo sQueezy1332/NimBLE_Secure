@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 #pragma once
-#define _WANT_USE_LONG_TIME_T
-#include <stdint.h>
 /* Includes */
 /* NimBLE GATT APIs */
 /* #include "host/ble_gatt.h"
@@ -46,7 +44,7 @@ int gatt_svr_subscribe_cb(const struct ble_gap_event *event);
 extern bool is_connection_encrypted(uint16_t conn_handle);
 extern void impl_io_on();
 extern void impl_io_off();
-extern uint8_t impl_io_get();
+extern int impl_io_get();
 #ifdef __cplusplus
 }
 #endif
