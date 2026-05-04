@@ -1,3 +1,5 @@
+#define _WANT_USE_LONG_TIME_T
+#include "esp_main.h"
 #include <string.h>
 //#include <freertos/FreeRTOS.h>
 #include <esp_http_server.h>
@@ -14,13 +16,14 @@
 
 __unused static esp_err_t basic_auth_get_handler(httpd_req_t *req);
 httpd_handle_t http_server;
-esp_timer_handle_t timer_wifi;
+
 extern byte scan_key[32]; extern byte passkey[32];
 extern byte scan_key_len, passkey_len;
 extern int wifi_is_connected();
-extern void bytes_to_str_bigend(char* ptr, cbyte* buf, size_t data_size);
+extern void bytes_to_str_bigend(char* ptr, const byte* buf, size_t data_size);
 extern void strtoB(const char* ptr, byte *buf, size_t & data_size, size_t  buf_len = sizeof(scan_key));
 extern void set_main_part();
+extern esp_err_t wifi_timer_reset(uint32_t);
 //extern String get_task_list();
 extern esp_err_t save_auth_data();
 extern void nvsErase(const char* = nullptr);
@@ -28,28 +31,7 @@ extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 extern int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 extern std::unique_ptr<char[]> get_task_list(size_t* len);
 
-static esp_err_t config_post_handler(httpd_req_t *req) {
-	char content[256];
-	size_t recv_size = req->content_len;
-	if(recv_size >= sizeof(content)) {
-		httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, NULL);
-	}
-    int ret = httpd_req_recv(req, content, recv_size);
-    if (ret <= 0) { // Check for timeout or error
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-            httpd_resp_send_408(req);
-        }
-        return ret;
-    }
-    content[ret] = '\0'; 
-	ESP_LOGI(STAG, "Received POST data:\n%s", content);
-	httpd_resp_set_status(req, HTTPD_200);
-    httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
-    return httpd_resp_send(req, content, ret);
-	return ESP_OK;
-}
-
-static esp_err_t upload_post_handler(httpd_req_t *req) {\
+static esp_err_t upload_post_handler(httpd_req_t *req) {
 	int ret; char buf[64+16]; esp_ota_handle_t _h;
 	auto send_error = [&req, &ret, &buf](const char *usr_msg) {
 		sprintf(buf, "%s 0x%X", usr_msg, ret);
@@ -105,6 +87,31 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {\
 	return ret;
 }
 
+static void http_response_set(httpd_req_t *req, esp_err_t ret = 0) {
+	httpd_resp_set_status(req, ret == ESP_OK ? HTTPD_200 : HTTPD_500); 
+    httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+}
+
+static esp_err_t config_post_handler(httpd_req_t *req) {
+	char content[256];
+	size_t recv_size = req->content_len;
+	if(recv_size >= sizeof(content)) {
+		httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, NULL);
+	}
+    int ret = httpd_req_recv(req, content, recv_size);
+    if (ret <= 0) { // Check for timeout or error
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+        return ret;
+    }
+    content[ret] = '\0'; 
+	ESP_LOGI(STAG, "Received POST data:\n%s", content);
+	http_response_set(req);
+    return httpd_resp_send(req, content, ret);
+	return ESP_OK;
+}
+
 static esp_err_t index_get_handler(httpd_req_t *req) {
 	extern const char index_html_start[] asm("_binary_index_html_gz_start");
 	extern const char index_html_end[] asm("_binary_index_html_gz_end");
@@ -129,20 +136,18 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
 
 static esp_err_t reset_handler(httpd_req_t *req) {
 	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
-	static const char str[] = "esp_restart()";
-	esp_err_t ret = esp_timer_start(timer_wifi, 1000*100);
-	httpd_resp_set_status(req, !ret ? HTTPD_200 : HTTPD_500);
-    httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+	constexpr char str[] = "esp_restart()";
+	esp_err_t ret = wifi_timer_reset(100);
+	http_response_set(req, ret);
    	httpd_resp_send(req, str, sizeof(str) - 1);
 	return ret;
 }
 
 static esp_err_t valid_handler(httpd_req_t *req) {
 	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
-	static const char str[] = "esp_ota_mark_app_valid_cancel_rollback()";
+	constexpr char str[] = "esp_ota_mark_app_valid_cancel_rollback()";
 	esp_err_t ret = esp_ota_mark_app_valid_cancel_rollback();
-	httpd_resp_set_status(req, !ret ? HTTPD_200 : HTTPD_500); 
-    httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+	http_response_set(req, ret);
    	httpd_resp_send(req, str, sizeof(str) - 1);
 	return ret;
 }
@@ -191,8 +196,7 @@ esp_err_t http_server_init(void) {
 		auto str = get_task_list(&len);
 		if(!str) return -1;
 		strcpy(str.get(), "Compiled: " __TIMESTAMP__);
-		httpd_resp_set_status(req, HTTPD_200);
-    	httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+		http_response_set(req, 0);
 		return httpd_resp_send(req, str.get(), len);
 	};
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
