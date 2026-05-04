@@ -48,15 +48,16 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-static esp_err_t upload_post_handler(httpd_req_t *req) {
+static esp_err_t upload_post_handler(httpd_req_t *req) {\
+	int ret; size_t remaining = req->content_len;
 	const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
-	if(!ota_partition) return 0xBAADF00D;
-	size_t remaining = req->content_len;
-	auto deleter = [](esp_ota_handle_t* p) { if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((uint32_t)p)); } };
-	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle(NULL ,deleter);
-	int ret = esp_ota_begin(ota_partition, remaining, reinterpret_cast<esp_ota_handle_t*>(&ota_handle));
-	char buf[64+16];
-	if(ret) {
+	if(!ota_partition) return 0xDEADBEEF;
+	esp_ota_handle_t _h; char buf[64+16]; 
+	auto send_error = [&req, &ret, &buf](const char *usr_msg) {
+		sprintf(buf, "%s 0x%X", usr_msg, ret);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
+	};
+	if((ret = esp_ota_begin(ota_partition, remaining, &_h))) {
 		sprintf(buf, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
 			 ret, ota_partition->label, ota_partition->size, ota_partition->address, remaining);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
@@ -65,6 +66,8 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 	}
 	ESP_LOGI(STAG, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
 			 ret, ota_partition->label, ota_partition->size, ota_partition->address, remaining);
+	auto deleter = [](esp_ota_handle_t* p) { if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((uint32_t)p)); } };
+	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle((esp_ota_handle_t*)_h ,deleter);
 	std::unique_ptr<char[]>ota_buf(new char[OTA_BUF_SIZE]); if(!ota_buf){ return 0xBAADF00D; }
 	while (1) { 
 		ret = httpd_req_recv(req, ota_buf.get(), OTA_BUF_SIZE); //internal check
@@ -75,34 +78,25 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 					ESP_LOGW(STAG, "Timeout");
 					continue;
 				}
-				ESP_LOGE(STAG, "Timeout");
-				return ret;
+				ESP_LOGE(STAG, "Timeout"); return ret;
 			}
-			sprintf(buf, "httpd_req_recv() err %d", ret);
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
-			return ret; // Serious Error: Abort OTA
+			send_error("httpd_req_recv()"); return ret; // Serious Error: Abort OTA
 		};
 		if ((ret = esp_ota_write((esp_ota_handle_t)ota_handle.get(), ota_buf.get(), ret))) {
-			sprintf(buf, "esp_ota_write() 0x%X", ret);
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
-			return ret;
+			send_error("esp_ota_write()"); return ret;
 		};
 	}
 	ESP_LOGI(STAG, "%lu bytes recieved", req->content_len);
 	if(!(ret = esp_ota_end((esp_ota_handle_t)ota_handle.get()))) {
 		if(!(ret = esp_ota_set_boot_partition(ota_partition))) {
-			static const char str[] = "Success! Can reboot";
+			constexpr char str[] = "Success! Can reboot";
 			ret = httpd_resp_send(req, str, sizeof(str)-1);
 			ESP_LOGI(STAG, "%s 0x%X", str, ret);
-			*reinterpret_cast<esp_ota_handle_t*>(&ota_handle) = 0;
+			(void)ota_handle.release();
 			return ret;
 		}
-		sprintf(buf, "esp_ota_set_boot_partition() 0x%X", ret);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
-	} else { 
-		sprintf(buf, "esp_ota_end() 0x%X", ret);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
-	}
+		send_error("esp_ota_set_boot_partition()");
+	} else { send_error("esp_ota_end()"); }
 	ESP_LOGE(STAG, "%s", buf);
 	return ret;
 }
@@ -165,12 +159,7 @@ esp_err_t http_server_init(void) {
 	uri.method = HTTP_POST;
 	uri.handler = upload_post_handler;
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
-/*
-	uri.uri = "/restart";
-	uri.method = HTTP_POST;
-	uri.handler = reset_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
-*/
+
 	uri.uri = "/restart";
 	uri.method = HTTP_GET;
 	uri.handler = reset_handler;
@@ -190,6 +179,7 @@ esp_err_t http_server_init(void) {
 	uri.method = HTTP_GET;
 	uri.handler = valid_handler;
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	
 	/*
     uri.uri       = "/basic_auth";
     uri.method    = HTTP_GET;
