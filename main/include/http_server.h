@@ -49,23 +49,26 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t upload_post_handler(httpd_req_t *req) {\
-	int ret; size_t remaining = req->content_len;
-	const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
-	if(!ota_partition) return 0xDEADBEEF;
-	esp_ota_handle_t _h; char buf[64+16]; 
+	int ret; char buf[64+16]; esp_ota_handle_t _h;
 	auto send_error = [&req, &ret, &buf](const char *usr_msg) {
 		sprintf(buf, "%s 0x%X", usr_msg, ret);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
 	};
-	if((ret = esp_ota_begin(ota_partition, remaining, &_h))) {
+	const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
+	if(!ota_partition) {
+		ret = 0xDEADBEEF;
+		send_error("!ota_partition");
+		return ret;
+	}
+	if((ret = esp_ota_begin(ota_partition, req->content_len, &_h))) {
 		sprintf(buf, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
-			 ret, ota_partition->label, ota_partition->size, ota_partition->address, remaining);
+			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
 		ESP_LOGE(STAG, "%s", buf);
 		return ret;
 	}
 	ESP_LOGI(STAG, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
-			 ret, ota_partition->label, ota_partition->size, ota_partition->address, remaining);
+			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 	auto deleter = [](esp_ota_handle_t* p) { if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((uint32_t)p)); } };
 	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle((esp_ota_handle_t*)_h ,deleter);
 	std::unique_ptr<char[]>ota_buf(new char[OTA_BUF_SIZE]); if(!ota_buf){ return 0xBAADF00D; }
