@@ -26,6 +26,7 @@ extern esp_err_t save_auth_data();
 extern void nvsErase(const char* = nullptr);
 extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 extern int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
+extern std::unique_ptr<char[]> get_task_list(size_t* len);
 
 static esp_err_t config_post_handler(httpd_req_t *req) {
 	char content[256];
@@ -40,7 +41,7 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
         }
         return ret;
     }
-    content[ret] = '\0';
+    content[ret] = '\0'; 
 	ESP_LOGI(STAG, "Received POST data:\n%s", content);
 	httpd_resp_set_status(req, HTTPD_200);
     httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
@@ -182,7 +183,20 @@ esp_err_t http_server_init(void) {
 	uri.method = HTTP_GET;
 	uri.handler = valid_handler;
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
-	
+
+	uri.uri = "/info";
+	uri.method = HTTP_GET;
+	uri.handler = [](httpd_req_t *req) -> esp_err_t {
+		size_t len;
+		auto str = get_task_list(&len);
+		if(!str) return -1;
+		strcpy(str.get(), "Compiled: " __TIMESTAMP__);
+		httpd_resp_set_status(req, HTTPD_200);
+    	httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+		return httpd_resp_send(req, str.get(), len);
+	};
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	//
 	/*
     uri.uri       = "/basic_auth";
     uri.method    = HTTP_GET;
