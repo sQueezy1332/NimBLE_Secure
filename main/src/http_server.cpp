@@ -10,9 +10,10 @@
 #include "esp_check.h"
 #include <memory>
 
-#define STAG "HTTP"
 #define OTA_BUF_SIZE (0x1000)
 #define HTTPD_401      "401 UNAUTHORIZED"
+
+static const char* TAG = "HTTP";
 
 __unused static esp_err_t basic_auth_get_handler(httpd_req_t *req);
 httpd_handle_t http_server;
@@ -47,10 +48,10 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 		sprintf(buf, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
 			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
-		ESP_LOGE(STAG, "%s", buf);
+		ESP_LOGE(TAG, "%s", buf);
 		return ret;
 	}
-	ESP_LOGI(STAG, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
+	ESP_LOGI(TAG, "ota_begin(), 0x%X, %s->size %lu, offset 0x%lX; content_len(%u)",
 			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 	auto deleter = [](esp_ota_handle_t* p) { if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((uint32_t)p)); } };
 	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle((esp_ota_handle_t*)_h ,deleter);
@@ -61,10 +62,10 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 		if (ret < 0) {
 			if (ret == HTTPD_SOCK_ERR_TIMEOUT) { 
 				if(wifi_is_connected()) {
-					ESP_LOGW(STAG, "Timeout");
+					ESP_LOGW(TAG, "Timeout");
 					continue;
 				}
-				ESP_LOGE(STAG, "Timeout"); return ret;
+				ESP_LOGE(TAG, "Timeout"); return ret;
 			}
 			send_error("httpd_req_recv()"); return ret; // Serious Error: Abort OTA
 		};
@@ -72,18 +73,18 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 			send_error("esp_ota_write()"); return ret;
 		};
 	}
-	ESP_LOGI(STAG, "%lu bytes recieved", req->content_len);
+	ESP_LOGI(TAG, "%lu bytes recieved", req->content_len);
 	if(!(ret = esp_ota_end((esp_ota_handle_t)ota_handle.get()))) {
 		if(!(ret = esp_ota_set_boot_partition(ota_partition))) {
 			constexpr char str[] = "Success! Can reboot";
 			ret = httpd_resp_send(req, str, sizeof(str)-1);
-			ESP_LOGI(STAG, "%s 0x%X", str, ret);
+			ESP_LOGI(TAG, "%s 0x%X", str, ret);
 			(void)ota_handle.release();
 			return ret;
 		}
 		send_error("esp_ota_set_boot_partition()");
 	} else { send_error("esp_ota_end()"); }
-	ESP_LOGE(STAG, "%s", buf);
+	ESP_LOGE(TAG, "%s", buf);
 	return ret;
 }
 
@@ -106,7 +107,7 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
         return ret;
     }
     content[ret] = '\0'; 
-	ESP_LOGI(STAG, "Received POST data:\n%s", content);
+	ESP_LOGI(TAG, "Received POST data:\n%s", content);
 	http_response_set(req);
     return httpd_resp_send(req, content, ret);
 	return ESP_OK;
@@ -116,10 +117,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 	extern const char index_html_start[] asm("_binary_index_html_gz_start");
 	extern const char index_html_end[] asm("_binary_index_html_gz_end");
 	size_t length = index_html_end - index_html_start; 
-	ESP_LOGD(STAG, "html size %lu", length);
+	ESP_LOGD(TAG, "html size %lu", length);
 	httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 	int ret = httpd_resp_send(req, index_html_start, length);
-	if(ret) { ESP_LOGE(STAG, "0x%X", ret); }
+	if(ret) { ESP_LOGE(TAG, "0x%X", ret); }
 	return ret;
 }
 
@@ -127,15 +128,15 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
 	extern const char config_html_start[] asm("_binary_config_html_gz_start");
 	extern const char config_html_end[] asm("_binary_config_html_gz_end");
 	const size_t length = config_html_end - config_html_start;
-	ESP_LOGD(STAG, "html size %lu", length);
+	ESP_LOGD(TAG, "html size %lu", length);
 	httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 	int ret = httpd_resp_send(req, config_html_start, length);
-	if(ret) { ESP_LOGE(STAG, "0x%X", ret); } 
+	if(ret) { ESP_LOGE(TAG, "0x%X", ret); } 
 	return ret;
 }
 
 static esp_err_t reset_handler(httpd_req_t *req) {
-	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
+	ESP_LOGI(TAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
 	constexpr char str[] = "esp_restart()";
 	esp_err_t ret = wifi_timer_reset(100);
 	http_response_set(req, ret);
@@ -144,7 +145,7 @@ static esp_err_t reset_handler(httpd_req_t *req) {
 }
 
 static esp_err_t valid_handler(httpd_req_t *req) {
-	ESP_LOGI(STAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
+	ESP_LOGI(TAG, "%s; method %d; content_len %lu", req->uri, req->method, req->content_len);
 	constexpr char str[] = "esp_ota_mark_app_valid_cancel_rollback()";
 	esp_err_t ret = esp_ota_mark_app_valid_cancel_rollback();
 	http_response_set(req, ret);
@@ -154,7 +155,7 @@ static esp_err_t valid_handler(httpd_req_t *req) {
 
 esp_err_t http_server_init(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-	ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), TAG, "");
 
 	httpd_uri_t uri = {
 		.uri = "/update",
@@ -162,32 +163,32 @@ esp_err_t http_server_init(void) {
 		.handler = index_get_handler,
 		.user_ctx = NULL
 	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/update/start";
 	uri.method = HTTP_POST;
 	uri.handler = upload_post_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/restart";
 	uri.method = HTTP_GET;
 	uri.handler = reset_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/config";
 	uri.method = HTTP_GET;
 	uri.handler = config_get_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/config";
 	uri.method = HTTP_POST;
 	uri.handler = config_post_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/valid";
 	uri.method = HTTP_GET;
 	uri.handler = valid_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
 	uri.uri = "/info";
 	uri.method = HTTP_GET;
@@ -199,13 +200,13 @@ esp_err_t http_server_init(void) {
 		http_response_set(req, 0);
 		return httpd_resp_send(req, str.get(), len);
 	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 	//
 	/*
     uri.uri       = "/basic_auth";
     uri.method    = HTTP_GET;
     uri.handler   = basic_auth_get_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), STAG, "");
+	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 	*/
 	return ESP_OK;
 }
@@ -217,49 +218,49 @@ static esp_err_t basic_auth_get_handler(httpd_req_t *req)
     //basic_auth_info_t *basic_auth_info = req->user_ctx;
 	
     buf_len = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
-	ESP_LOGI(STAG, "%s; method %d; buf_len %lu; content_len %lu", req->uri, req->method, buf_len, req->content_len);
+	ESP_LOGI(TAG, "%s; method %d; buf_len %lu; content_len %lu", req->uri, req->method, buf_len, req->content_len);
     if (buf_len > 1) {
         buf = (char*)calloc(1, buf_len);
         if (!buf) {
-            ESP_LOGE(STAG, "No enough memory for basic authorization");
+            ESP_LOGE(TAG, "No enough memory for basic authorization");
             return ESP_ERR_NO_MEM;
         }
 
         if (httpd_req_get_hdr_value_str(req, "Authorization", buf, buf_len) == ESP_OK) {
-            ESP_LOGI(STAG, "Found header => Authorization: %s", buf);
+            ESP_LOGI(TAG, "Found header => Authorization: %s", buf);
         } else {
-            ESP_LOGE(STAG, "No auth value received");
+            ESP_LOGE(TAG, "No auth value received");
         }
 
         //char *auth_credentials = http_auth_basic(basic_auth_info->username, basic_auth_info->password);
         //if (!auth_credentials) {
-         //   ESP_LOGE(STAG, "No enough memory for basic authorization credentials");
+         //   ESP_LOGE(TAG, "No enough memory for basic authorization credentials");
          //   free(buf);
          //   return ESP_ERR_NO_MEM;
         //}
 
         //if (strncmp(auth_credentials, buf, buf_len)) {
 		if (0) {
-            ESP_LOGE(STAG, "Not authenticated");
+            ESP_LOGE(TAG, "Not authenticated");
             httpd_resp_set_status(req, HTTPD_401);
             httpd_resp_set_type(req, "application/json");
             httpd_resp_set_hdr(req, "Connection", "keep-alive");
             httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"Hello\"");
             httpd_resp_send(req, NULL, 0);
         } else {
-            ESP_LOGI(STAG, "Authenticated!");
+            ESP_LOGI(TAG, "Authenticated!");
             char *basic_auth_resp = NULL;
             httpd_resp_set_status(req, HTTPD_200);
             httpd_resp_set_type(req, "application/json");
             httpd_resp_set_hdr(req, "Connection", "keep-alive");
             int rc = asprintf(&basic_auth_resp, "{\"authenticated\": true,\"user\": \"%s\"}", "username");
             if (rc < 0) {
-                ESP_LOGE(STAG, "asprintf() returned: %d", rc);
+                ESP_LOGE(TAG, "asprintf() returned: %d", rc);
                 //free(auth_credentials);
                 return ESP_FAIL;
             }
             if (!basic_auth_resp) {
-                ESP_LOGE(STAG, "No enough memory for basic authorization response");
+                ESP_LOGE(TAG, "No enough memory for basic authorization response");
                 //free(auth_credentials);
                 free(buf);
                 return ESP_ERR_NO_MEM;
@@ -270,7 +271,7 @@ static esp_err_t basic_auth_get_handler(httpd_req_t *req)
         //free(auth_credentials);
         free(buf);
     } else {
-        ESP_LOGE(STAG, "No auth header received");
+        ESP_LOGE(TAG, "No auth header received");
         httpd_resp_set_status(req, HTTPD_401);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Connection", "keep-alive");
