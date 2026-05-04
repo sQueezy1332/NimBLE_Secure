@@ -16,7 +16,7 @@
 #include "host/ble_hs.h"
 //#include "host/util/util.h"
 #include "gap.h"
-#include "gatt_svc.h"
+#include "gatt.h"
 #define HEART_RATE_PERIOD (2000 * 1000)
 //#include "led.h"
 //#include "common.h"
@@ -27,14 +27,13 @@
 				//#define CONFIG_GENERIC_PATCHER
 //#ifdef CONFIG_FACTORY_FIRMWARE
 #include "wifi_api.h"
-#include "http_server.h"
 //#endif
+#include <memory>
 
 //#define NO_PARSE_KEY
-//#define TAG "MAIN"
+
 static const char* TAG = "MAIN";
 #define TMR "TMR"
-#define NVS "NVS"
 
 #define dWrite(x,y) digitalWrite(x, y)
 #define dRead(x) digitalRead(x)
@@ -78,12 +77,13 @@ using String = std::string;
 typedef struct { byte patch , updated , valid;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
-
-StackType_t xMainStack[4*1024] , xHostStack[NIMBLE_HS_STACK_SIZE]; //static_assert(configTIMER_TASK_STACK_DEPTH > 3000);
-StaticTask_t xMainTaskBuffer , xHostTaskBuffer;
+//NIMBLE_HS_STACK_SIZE
+//StackType_t xMainStack[4*1024]; StaticTask_t xMainTaskBuffer;
+StackType_t	xHostStack[1024*8]; StaticTask_t xHostTaskBuffer;
 TaskHandle_t h_main_task, h_nimble_task;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
 esp_timer_handle_t timer_patch;
+esp_timer_handle_t h_timer_wifi;
 __unused esp_netif_t* h_netif_sta;
 __unused esp_netif_t* h_netif_ap;
 byte passkey[32] = DEF_BLE_PASS_BASE32;
@@ -93,12 +93,12 @@ byte scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <
 //static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
 static sets_t sets = {};
-
+/*
 static struct bond_mac_s {
 	ble_addr_t arr;
 	byte crc;
 } bonded_addr __attribute__((section(".noinit." "1")));
-static_assert(sizeof(bond_mac_s) == 8);
+static_assert(sizeof(bond_mac_s) == 8);*/
 
 static void wifi_init();
 __unused static void mainTask(void *);
@@ -115,7 +115,7 @@ void strtoB(const char* str, byte* buf, size_t& data_size, size_t buf_len);
 template <bool = false, char = 0> void bytes_to_str(char* dest, cbyte* src, size_t data_size);
 void bytes_to_str_bigend(char* dest, cbyte* src, size_t data_size) { bytes_to_str<true, ' '>(dest, src, data_size) ; };
 //void generate_salt();
-void ble_delete_all_peers(bond_mac_s* = nullptr);
+void ble_delete_all_peers();
 bool wifi_sta_wait_conn(); 
 
 bool read_bonded_mac();
@@ -137,9 +137,8 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
-static void get_task_list(String& str);
-String get_task_list() { String str; get_task_list(str); return str; }
-void print_task_list() { DEBUGLN(get_task_list().c_str()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+std::unique_ptr<char[]> get_task_list(size_t* len = nullptr);
+void print_task_list() { DEBUG(get_task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 
 //__unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
@@ -164,7 +163,7 @@ void timer_patch_off_cb(void *) {
 void impl_io_on() { patch_func(); }
 void impl_io_off() { patch_func(TIMER_PATCH_OFF); }
 
-uint8_t impl_io_get() { return IO_GET_IMPL(); }
+int impl_io_get() { return IO_GET_IMPL(); }
 
 #ifdef DEBUG_ENABLE
 uint32_t get_pincode() { return 111111; }
@@ -208,16 +207,14 @@ esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &buf, siz
 		if(ret) return ret;
 		return 1;
 	case NVS_TYPE_STR:
-		ret = nvs_get_str(handle, key, NULL, &required_size);
-		if(ret) return ret;
+		if((ret = nvs_get_str(handle, key, NULL, &required_size))) return ret;
 		ptr = realloc(buf, required_size);
 		if (!ptr) return ESP_ERR_NO_MEM; buf = ptr;
 		nvs_get_str(handle, key, (char*)buf, &required_size);
 		if (size) *size = required_size; 
 		return 2;
 	case NVS_TYPE_BLOB: 
-		ret = nvs_get_blob(handle, key, NULL, &required_size);
-		if(ret) return ret;
+		if((ret = nvs_get_blob(handle, key, NULL, &required_size))) return ret;
 		ptr = realloc(buf, required_size);
 		if (!ptr) return ESP_ERR_NO_MEM; buf = ptr;
 		nvs_get_blob(handle, key, buf, &required_size);
@@ -228,38 +225,45 @@ esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &buf, siz
 	return ret;
 }
 
-void nvs_test() {
+void nvs_test(const char* key = nullptr) {
+	__unused static const char* TAG = "NVS";
 	esp_err_t ret; void* buf = malloc(64); size_t buf_len = 0;
-	nvs_stats_t nvs_stats{}; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
+	nvs_stats_t nvs_stats {}; nvs_entry_info_t entry; nvs_iterator_t it = NULL;
 	nvs_get_stats(NULL, &nvs_stats);
-	ESP_LOGI("NVS", "Used %u, Free %u, Available %u, All = %u, Namespaces %u entries",
+	ESP_LOGI(TAG, "Used %u, Free %u, Available %u, All = %u, Namespaces %u entries",
 		nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.available_entries, nvs_stats.total_entries, nvs_stats.namespace_count);
-	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
-	while (ret == ESP_OK) {
+	for (ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it); ret == ESP_OK; ret = nvs_entry_next(&it)) {
 		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
-		nvsApi nvs; ESP_LOGI("NVS", "space '%s'\tkey '%s'\ttype '%u'\n", entry.namespace_name, entry.key, entry.type);
+		nvsApi nvs; ESP_LOGI(TAG, "space '%s'\tkey '%s'  type '%u'", entry.namespace_name, entry.key, entry.type);
+		if(key && !strcmp(key,entry.key)) continue;
 		if(!nvs.begin(entry.namespace_name, NVS_READONLY)) {
 			switch (esp_err_t ret = nvsGet(nvs, entry.key, entry.type, buf, &buf_len)) {
 			case ESP_OK: 
-				DEBUGF("Data = %lu\n", *(uint32_t*)buf); break;
+				DEBUGF("Data = %lu\n", *(uint32_t*)buf); 
+				break;
 			case 1:
-				DEBUGF("Data = %llu\n", *(uint64_t*)buf); break;
+				#ifdef CONFIG_LIBC_NEWLIB_NANO_FORMAT
+				DEBUGF("Data = "); if(((uint32_t*)buf)[1]) { DEBUGF("%02lX", ((uint32_t*)buf)[1]); }
+				DEBUGF("%08lX", ((uint32_t*)buf)[0]); DEBUGLN();
+				#else
+				DEBUGF("Data = %llu\n", *(uint64_t*)buf);
+				#endif
+				break;
 			case 2: 
-				DEBUGF("Str: %s\n", (char*)buf); break;
+				ESP_LOGI(TAG, "Str: %s\n", (char*)buf); break;
 			case 3: 
-				DEBUGF("Blob size %u: ", buf_len);
+				ESP_LOGI(TAG, "Blob size %u: ", buf_len);
 				for (size_t i = 0; i < buf_len; i++) { DEBUGF("%02X ", ((byte*)buf)[i]); }; DEBUGLN();
 				break;
-			default: ESP_LOGE("NVS", "nvsGet()" " 0x%X", ret);
+			default: ESP_LOGE(TAG, "nvsGet()" " 0x%X", ret);
 			}
 		}
-		ret = nvs_entry_next(&it);
 	}
 	free(buf);
 	nvs_release_iterator(it);
 }
 
-void nvsErase(cch* except) {
+void nvsEraseAll(cch* except) {
 	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
 	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
 	while (ret == ESP_OK) {
