@@ -10,6 +10,15 @@
 #define ARDUINO_USB_MODE 1
 #endif
 #endif 
+#define INPUT				0x01
+#define OUTPUT				0x03
+#define PULLUP				0x04
+#define INPUT_PULLUP		0x05
+#define PULLDOWN			0x08
+#define INPUT_PULLDOWN		0x09
+#define OPEN_DRAIN			0x10
+#define OUTPUT_OPEN_DRAIN	0x13
+#define ANALOG				0xC0
 //ESP_ROM_HAS_NEWLIB_NANO_FORMAT //627063
 //ESP_ROM_HAS_NEWLIB_NORMAL_FORMAT //643633
 #include "nvs_flash.h"
@@ -19,8 +28,8 @@
 #include "esp_check.h"
 //#include "esp_task_wdt.h"
 
-#if defined (CONFIG_LIBC_NEWLIB_NANO_FORMAT) && (defined CONFIG_LIBC_NEWLIB_NANO_FORMAT)
-#pragma message "NEWLIB_NANO_FORMAT" //~16,570 bytes smaller
+#ifdef CONFIG_LIBC_NEWLIB_NANO_FORMAT //~16,570 bytes smaller
+#pragma message "NEWLIB_NANO_FORMAT"
 #endif
 #ifdef DEBUG_ENABLE
 #pragma message "DEBUG_ENABLE"
@@ -32,11 +41,12 @@
 #pragma message "UART0" //definiton in HardwareSerial.cpp
 #endif  // !ARDUINO_USB_CDC_ON_BOOT -- Serial is used from UART0
 #define DEBUG(x, ...) printf(x, ##__VA_ARGS__)
-#define DEBUGLN(x, ...) printf("\n");
+#define DEBUGLN() printf("\n")
+//#define DEBUGLN(x, ...) printf("%s\n", x, ##__VA_ARGS__)
 #define DEBUGF(x, ...) printf(x , ##__VA_ARGS__)
 #else
 #define DEBUG(x, ...)
-#define DEBUGLN(x, ...) 
+#define DEBUGLN()
 #define DEBUGF(x, ...)
 #endif // DEBUG_ENABLE
 #define FUN __FUNCTION__
