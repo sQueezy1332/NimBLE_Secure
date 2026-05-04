@@ -3,24 +3,27 @@
 
 extern "C" void app_main() {
 	nvs_init();
-	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
+	pinMode(13, OUTPUT);
 	//read_noinit();  //0x253D7465 == crc8 //609862 //570586
 	//ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());nvs_test();ESP_LOGI(TAG,"%lu", ESP.getFreeHeap());
 #ifdef DEBUG_ENABLE
-		//printHeapInfo();
+	delay(3000);
+	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
+	printHeapInfo();
 	esp_log_level_set("*", ESP_LOG_DEBUG);
 	esp_log_level_set("nvs", ESP_LOG_INFO);
 	esp_log_level_set("wifi", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);
 	esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
 	totp_test();
+	nvs_test("cal_data");
 	ESP_LOGI(TAG, "FreeHeap() %lu", getFreeHeap());
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
 	//vTaskDelay(1); volatile int var = 0; assert(var);
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
 	//pinMode(12, OUTPUT);//led_init();
-	//nvs_test();
-	//nvsErase(NULL);
+	//delay(5000); nvs_test(); //nvsEraseAll(NULL);
+	
 #endif
 	
 	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
@@ -44,7 +47,7 @@ extern "C" void app_main() {
 	assert(timer_patch);
 	nvs_read_sets();
 	read_auth_data(); ESP_LOGD(TAG, "passkey_len %u, scan_key_len: %u\n", passkey_len, scan_key_len);//DEBUGLN(passkey);
-	read_bonded_mac();
+	//read_bonded_mac();
 	ESP_ERROR_CHECK(nimble_port_init());
 	gap_init();
 	gatt_svc_init();
@@ -89,7 +92,7 @@ void wifi_timer_restart() { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start(timer_
 
 static void mainTask(void * arg = NULL) {
 	h_main_task = xTaskGetCurrentTaskHandle();
-	printHeapInfo();
+	printHeapInfo(); //ble_store_clear();
 	for(;;) {
 		switch (ulTaskNotifyTake(1,portMAX_DELAY)) { 
 		//case OTA: vTaskSuspend(ble_handle);
@@ -127,7 +130,7 @@ void rand_device_name() {
 	bytes_to_str<false, 0>(&pName[name_len + 1], (byte*)&rand_num, sizeof(rand_num));
 }
 
-void ble_delete_all_peers(bond_mac_s* except) {
+void ble_delete_all_peers() {
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 	ble_addr_t peer_id_addrs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 	int num_peers = 0;
@@ -136,24 +139,24 @@ void ble_delete_all_peers(bond_mac_s* except) {
 	if(num_peers > MYNEWT_VAL(BLE_STORE_MAX_BONDS)) { num_peers = MYNEWT_VAL(BLE_STORE_MAX_BONDS); }
 	for(size_t i = 0; i < num_peers; i++) {
 		//print_addr((peer_id_addrs[i].val));
-		if(except && (*reinterpret_cast<uint64_t*>(except) != 0) &&
-			!ble_addr_cmp(&except->arr, &peer_id_addrs[num_peers])) continue;
+		/*if(except && (*reinterpret_cast<uint64_t*>(except) != 0) &&
+			!ble_addr_cmp(&except->arr, &peer_id_addrs[num_peers])) continue;*/
 		ble_store_util_delete_peer(&peer_id_addrs[i]); 
 	}
 #endif
 }
-
+/*
 bool read_bonded_mac() {
 	byte crc = crc8_le(0, (byte*)&bonded_addr, 7);
 	if(bonded_addr.crc == crc) return true;
 	bonded_addr = {};
 	//bonded_addr.crc = crc8_le(0, (byte*)&bonded_addr, 7);
 	return false;
-}
+}*/
 
 void nvs_write_sets(nvsApi nvs) {
 	sets.crc = crc_func(sets); 
-	ESP_LOGD(NVS,"patch %u, upd %u, crc %02X", sets.patch, sets.updated, sets.crc);
+	ESP_LOGD("NVS","patch %u, upd %u, crc %02X", sets.patch, sets.updated, sets.crc);
 	CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
@@ -271,26 +274,30 @@ void parse_rx_data(const ble_gap_event* event) {
 		break;
 	case DELETE_ALL_PEERS: ble_delete_all_peers(); 
 		break;
-	case NVS_ERASE_ALL: nvsErase(nullptr);
+	case NVS_ERASE_ALL: nvsEraseAll(nullptr);
 		break;
-	case NVS_ERASE_ALL_EXC: nvsErase("phy");
+	case NVS_ERASE_ALL_EXC: nvsEraseAll("phy");
 		break;
-	case OFFSET: DEBUG(get_task_list().c_str());
+	case OFFSET: DEBUG(get_task_list().get());
 		break;
 	default: ESP_LOGW(TAG, "os_mbuf 0x%02X", val);
 	}
 }
 
-void get_task_list(String& str) {/*
-	size_t num = uxTaskGetNumberOfTasks(), heap = ESP.getFreeHeap(); ESP_LOGD(TAG,"NumberOfTasks = %u", num);
-	if (!str.reserve((num * 32 + 16) * (configGENERATE_RUN_TIME_STATS ? 2 : 1))) return;
-	char* const ptr = str.begin(); 
-	vTaskList(ptr);
-	num = strlen(ptr); strcpy(&ptr[num], "Heap:\t"); ultoa(heap, &ptr[num+6], DEC); num += strlen(&ptr[num]); strcpy(&ptr[num],"\n\n"); num+=2;
+std::unique_ptr<char[]> get_task_list(size_t* len) {
+	size_t i = uxTaskGetNumberOfTasks(), heap = getFreeHeap();
+	ESP_LOGD(TAG,"NumberOfTasks = %u", i);
+	i = ALIGN_TO_16(((i * 40) + 16) * (configGENERATE_RUN_TIME_STATS ? 2 : 1));
+	std::unique_ptr<char[]> ptr(new char[i]); 
+	char* str = ptr.get(); if(!str) return ptr;
+	vTaskList(str); i = strlen(str);
+	sprintf((str +=i) , "FreeHeap:\t%u", heap); i += strlen(str);
+	strcpy(&str[i],"\n\n"); i +=2;
 #if configGENERATE_RUN_TIME_STATS
-	vTaskGetRunTimeStats(&ptr[num]); num += strlen(&ptr[num]);
+	vTaskGetRunTimeStats(&str[i]); i += strlen(&str[i]);
 #endif
-	reinterpret_cast<uint32_t*>(&str)[2] = num;*/
+	if(len) *len = i;
+	return ptr;
 }
 
 template <bool big_endian, char separ> void bytes_to_str(char* dest, cbyte* src, size_t data_size) {
@@ -344,13 +351,13 @@ rdy:            dest[i] = result;
 }
 
 void set_ble_device_name() {
-	constexpr size_t name_len = sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1;
-	static_assert(name_len >= 7); static_assert(!MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC));
+	static_assert(!MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)); static_assert(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH) >=16);
+	constexpr int name_len = sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1; static_assert(name_len >= 7);
 	char* name = const_cast<char*>(ble_svc_gap_device_name()); byte mac[8];
 	*(name += name_len) = '-';
 	CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
 	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
-	sprintf(name + 1,"%02X""%02X""%02X", mac[3],mac[4],mac[5]); //621165
+	sprintf(name + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
 }
 
 uint32_t generate_salt() {
@@ -364,7 +371,7 @@ uint32_t generate_salt() {
 #endif
 		last_change = sec;
 		salt = time(NULL); 
-		//if(salt < 1766600000) salt = 0;
+		//if(salt < 1777740000) salt = 0;
 		pincode = TOTPget(passkey, passkey_len, salt); 
 		ESP_LOGI(TAG, "NEW PIN: %lu\tTime: %lu", pincode, salt);
 	}
@@ -376,13 +383,13 @@ uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
 }
 
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt) {
-	uint8_t* const pSalt = reinterpret_cast<uint8_t*>(&salt);
+	uint8_t* const pSalt = (uint8_t*)&salt;
 	uint8_t hash[20];  uint32_t result;
 	swap_in_place(pSalt, sizeof(salt)); //salt = ntohll(salt);
 	int ret = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1),key,key_len,pSalt,sizeof(salt), hash);
 	if(ret != 0) { ESP_LOGE(TAG, "HOTPget %d", ret); return 0; }
 	for (int i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
-		reinterpret_cast<uint8_t*>(&result)[3 - i] = hash[offset + i];
+		((uint8_t*)&result)[3 - i] = hash[offset + i];
 	}
 	result = (result & 0x7FFFFFFF) % 1000000;
 	return result;
@@ -429,7 +436,7 @@ int base32_decode(const char* encoded, uint8_t* result, size_t buf_len) {
 			bits_left -= 8;
 		}
 	}
-	if (count < buf_len) { result[count] = '\000';} 
+	if (count < buf_len) { result[count] = '\0';} 
 	return count;
 }
 
