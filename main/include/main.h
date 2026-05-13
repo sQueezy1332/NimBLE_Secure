@@ -7,11 +7,13 @@
 #include "esp_main.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "driver/usb_serial_jtag.h"
 //#include "esp_random.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/md.h"
 #include "rom/crc.h"
 //#include "nimble/nimble_port_freertos.h" 
+#include "syscfg/syscfg.h"
 #include "nimble/nimble_port.h"
 #include "host/ble_hs.h"
 //#include "host/util/util.h"
@@ -20,7 +22,6 @@
 #define HEART_RATE_PERIOD (2000 * 1000)
 //#include "led.h"
 //#include "common.h"
-
 #include "esp_mac.h"
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
@@ -40,11 +41,11 @@ static const char* TAG = "MAIN";
 
 #define PIN_RELAY 4
 #define PIN_RELAY_GND 3 //unused in code
-	//#define PIN_RELAY_2 2
 #define PIN_LED 8
 
 #ifdef CONFIG_GENERIC_PATCHER
 #define PIN_LINE 1
+//#define PIN_RELAY_2 2
 #define PIN_LED_MASK BIT(PIN_LED)
 #define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
 #define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_3)
@@ -73,8 +74,14 @@ static const char* TAG = "MAIN";
 	#define RELAY_2_PATCH_IMPL()
 	#define RELAY_2_UNPATCH_IMPL()
 #endif
+
+#define UART_BUF_SIZE (256)
+#define CDC_BUF_SIZE (128)
+#define UART_PORT UART_NUM_1
+#define PATTERN_CHR_NUM    (1)   /*!< Set the number of consecutive and identical characters received by receiver which defines a UART pattern*/
+
 using String = std::string;
-typedef struct { byte patch , updated , valid;  uint8_t crc; } sets_t;
+typedef struct { byte patch , upd , flag;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
 //NIMBLE_HS_STACK_SIZE
@@ -82,17 +89,22 @@ typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, 
 StackType_t	xHostStack[1024*8]; StaticTask_t xHostTaskBuffer;
 TaskHandle_t h_main_task, h_nimble_task;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
-esp_timer_handle_t timer_patch;
+esp_timer_handle_t h_timer_patch;
 esp_timer_handle_t h_timer_wifi;
+esp_timer_handle_t h_timer_valid;
 __unused esp_netif_t* h_netif_sta;
 __unused esp_netif_t* h_netif_ap;
-byte passkey[32] = DEF_BLE_PASS_BASE32;
+byte pass_key[32] = DEF_BLE_PASS_BASE32;
 byte scan_key[32] = DEF_BLE_SCAN_DATA;
-byte passkey_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(passkey)); //sizeof(DEF_BLE_PASS)-1;
-byte scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
+uint8_t pass_key_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(pass_key)); //sizeof(DEF_BLE_PASS)-1;
+uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
+
+
+__unused static QueueHandle_t uart_queue;
+uint8_t uartBuffer[UART_BUF_SIZE];
 //static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
-static sets_t sets = {};
+static sets_t sets;
 /*
 static struct bond_mac_s {
 	ble_addr_t arr;
@@ -101,22 +113,25 @@ static struct bond_mac_s {
 static_assert(sizeof(bond_mac_s) == 8);*/
 
 static void wifi_init();
-__unused static void mainTask(void *);
+__unused static void mainTask(void * = NULL);
+__unused static void usb_cdc_task(void *arg);
 //__unused static void nimble_host_task(void *);
-
+extern esp_err_t http_server_init();
 //extern void set_cts_unix(time_t now);
 static void patch_func(uint64_t = TIMER_PATCH);
 
 __unused static void IRAM_ATTR isr_handler();
-__unused static void rand_device_name();
 void set_ble_device_name();
-//static uint32_t generate_pin(uint32_t, const char * = (char *)passkey, byte = passkey_len);
-void strtoB(const char* str, byte* buf, size_t& data_size, size_t buf_len);
-template <bool = false, char = 0> void bytes_to_str(char* dest, cbyte* src, size_t data_size);
-void bytes_to_str_bigend(char* dest, cbyte* src, size_t data_size) { bytes_to_str<true, ' '>(dest, src, data_size) ; };
+//static uint32_t generate_pin(uint32_t, const char * = (char *)pass_key, byte = pass_key_len);
+size_t strtoB(const char* str, byte* buf, size_t buf_len);
+template <bool = false, char = 0> int bytes_to_str(const byte* src, char* dest, size_t data_size);
+int bytes_to_str_bigend(const byte* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
 //void generate_salt();
 void ble_delete_all_peers();
 bool wifi_sta_wait_conn(); 
+void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
+void wifi_timer_start() { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
+esp_err_t wifi_timer_reset(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
 
 bool read_bonded_mac();
 //esp_err_t save_bonded_mac(const ble_addr_t &);
@@ -127,29 +142,32 @@ void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETS, NVS_READWRITE));
 esp_err_t save_auth_data();
 void read_auth_data();
 
-void update_start_cb() { sets.updated = 0; };
-void update_finish_cb() { sets.updated = 1; nvs_write_sets(); };
-void set_boot_partition(const esp_partition_subtype_t);
+void update_start_cb() { sets.upd = 0; };
+void update_finish_cb() { sets.upd = 1; nvs_write_sets(); };
+void set_boot_partition(esp_partition_subtype_t);
 void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
+void revoke_ota_rollback();
 
 int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
-std::unique_ptr<char[]> get_task_list(size_t* len = nullptr);
-void print_task_list() { DEBUG(get_task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+std::unique_ptr<char[]> task_list(size_t* len = nullptr);
+void print_task_list() { DEBUG(task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
 //__unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
-decltype(sets_t::crc) crc_func(const sets_t & buf) {
-	return (sizeof(sets_t::crc) == 2) ? crc16_le(0,(byte*)&buf, sizeof(sets_t::crc)) : crc8_le(0,(byte*)&buf, sizeof(sets_t::crc));
+decltype(sets_t::crc) crc_impl(const sets_t & buf) {
+	constexpr int size = sizeof(sets_t::crc), len = sizeof(sets_t) - sizeof(sets_t::crc);
+	return (size == 2) ? crc16_le(0,(uint8_t*)&buf, len) : crc8_le(0,(uint8_t*)&buf, len);
 }
 
 void patch_func(uint64_t period) { 
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL();
 	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
-	CHECK_(esp_timer_start(timer_patch, period));
+	CHECK_(esp_timer_start(h_timer_patch, period));
 }
 
 void unpatch_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } }
@@ -172,7 +190,7 @@ uint32_t get_pincode() { return pincode; }
 #endif
 
 #include "esp_partition.h"
-void partition_read() {
+inline void partition_read() {
 	auto i = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
 	for (;i; i = esp_partition_next(i)) {
 		const esp_partition_t* partArr = esp_partition_get(i);
@@ -182,7 +200,7 @@ void partition_read() {
 	esp_partition_iterator_release(i);
 }
 
-bool nvsOpen(const char* name_group, nvs_open_mode_t open_mode, nvs_handle_t* nvs_handle) {
+inline bool nvsOpen(const char* name_group, nvs_open_mode_t open_mode, nvs_handle_t* nvs_handle) {
 	esp_err_t err = nvs_open(name_group, open_mode, nvs_handle);
 	if (err == ESP_OK) return true;
 	if (err != ESP_ERR_NVS_NOT_FOUND || open_mode != NVS_READONLY) {
@@ -191,7 +209,7 @@ bool nvsOpen(const char* name_group, nvs_open_mode_t open_mode, nvs_handle_t* nv
 	return false;
 }
 
-esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &buf, size_t* size = nullptr) {
+inline esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &buf, size_t* size = nullptr) {
 	esp_err_t ret; size_t required_size; void* ptr; *(uint32_t*)buf = 0x0;
 	switch (type) {
 	case NVS_TYPE_U8:ret = nvs_get_u8(handle, key, (uint8_t*)buf); break;
@@ -225,7 +243,7 @@ esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &buf, siz
 	return ret;
 }
 
-void nvs_test(const char* key = nullptr) {
+inline void nvs_test(const char* key = nullptr) {
 	__unused static const char* TAG = "NVS";
 	esp_err_t ret; void* buf = malloc(64); size_t buf_len = 0;
 	nvs_stats_t nvs_stats {}; nvs_entry_info_t entry; nvs_iterator_t it = NULL;
@@ -263,7 +281,7 @@ void nvs_test(const char* key = nullptr) {
 	nvs_release_iterator(it);
 }
 
-void nvsEraseAll(cch* except) {
+void nvsEraseAll(const char *except) {
 	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
 	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
 	while (ret == ESP_OK) {
@@ -335,4 +353,17 @@ bool wifi_sta_wait_conn() {
 		ESP_LOGW(TAG, "? event bits: 0x%X", bits);
 	}
 	return false;
+}
+
+void read_noinit() {
+	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets));
+	if(crc16_le(0, (byte*)&sets, 2) == sets.crc) {
+	} else { sets = {}; ESP_LOGW(TAG, "noinit crc");}; 
+	//++sets.count;
+	sets.crc = crc16_le(0, (byte*)&sets, 2);
+}
+
+void write_noinit(byte val) {
+	sets.upd = val;
+	sets.crc = crc16_le(0, (byte*)&sets, 2); ESP_LOGD(TAG,"noinit %u, %u, %04X", sets.patch, sets.upd, sets.crc);
 }
