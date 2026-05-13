@@ -16,7 +16,6 @@ extern "C" void app_main() {
 	nvs_test("cal_data");
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
 	xTaskCreate(usb_cdc_task, "cdc", 4096, &uartBuffer, 5, nullptr);
-										nvs_read_sets();
 	//extern void uart_init(); uart_init();
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
 	//pinMode(12, OUTPUT);//led_init();
@@ -29,6 +28,7 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
    	{const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL };
 	ESP_ERROR_CHECK(gpio_config(&conf));}
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
+	nvs_read_sets();
 //#ifdef CONFIG_FACTORY_FIRMWARE
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
 	wifi_init(); return;
@@ -41,7 +41,6 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); enableInterrupt(PIN_LINE);
 #endif
 	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
-	nvs_read_sets();
 	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	ESP_ERROR_CHECK(nimble_port_init());
 	gap_init();
