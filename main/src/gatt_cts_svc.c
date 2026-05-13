@@ -10,8 +10,6 @@
 //#define CURRENT_TIME_WRITE
 #define DEVICE_TIME_CHR (0x2A16)
 static const char* TAG = "CTS";
-
-
 static_assert(sizeof(time_t) == 4);
 const struct ble_svc_cts_curr_time test = {
     .et_256 = {.d_d_t = { .d_t = {.year = 0x07EA, .month = 0x05, .day = 0x02, 
@@ -100,6 +98,11 @@ static const struct ble_gatt_svc_def ble_svc_cts_defs[] = {
     }, { 0, /* No more services. */ },
 };
 
+static void set_noinit_values(time_t val) {
+	last_updated = val;
+	last_updated_crc = last_updated + adjust_reason + 1;
+}
+
 void gatt_cts_service_init() {
     CHECK_(ble_gatts_count_cfg(ble_svc_cts_defs));
     CHECK_(ble_gatts_add_svcs(ble_svc_cts_defs));
@@ -114,8 +117,7 @@ void set_cts_unix(time_t now) {
     struct timeval64 tv_now = {.tv_sec = now };
     settimeofday((struct timeval *)&tv_now, NULL);
 	adjust_reason = MANUAL_TIME_UPDATE_MASK;
-    last_updated = now;//gettimeofday(&last_updated,/*  &tmz */NULL);  /* set the last updated */
-	last_updated_crc = last_updated + adjust_reason + 1;
+    set_noinit_values(now);//gettimeofday(&last_updated,/*  &tmz */NULL);  /* set the last updated */
 	ESP_LOGI(TAG, "set_cts_unix %lu", now);
 }
 
@@ -131,9 +133,8 @@ void set_current_time(struct ble_svc_cts_curr_time *ctime) {
     };
     struct timeval64 tv_now = {.tv_sec = mktime(&timeinfo) };
     settimeofday((struct timeval *)&tv_now, NULL);
-	adjust_reason = ctime->adjust_reason; 
-    last_updated = tv_now.tv_sec;  //gettimeofday(&last_updated, NULL);
-	last_updated_crc = last_updated + adjust_reason + 1;
+	adjust_reason = ctime->adjust_reason;
+	set_noinit_values(tv_now.tv_sec);  //gettimeofday(&last_updated, NULL);
 	ESP_LOGI(TAG, "%s tv_now %lu", __FUNCTION__, tv_now.tv_sec);
 }
 
