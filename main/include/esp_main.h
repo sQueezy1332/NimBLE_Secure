@@ -82,6 +82,7 @@ void disableInterrupt(uint8_t pin);
 esp_timer_handle_t 
 esp_timer_new(esp_timer_cb_t cb, esp_timer_dispatch_t type = ESP_TIMER_TASK, bool skip = 0, void* arg = NULL, const char* name = NULL);
 esp_err_t esp_timer_start(esp_timer_handle_t handle, uint64_t period);
+uint64_t esp_timer_period(esp_timer_handle_t handle);
 
 esp_err_t gptimer_alarm(gptimer_handle_t handle, uint64_t value, bool reload = 0, uint64_t count = 0);
 gptimer_handle_t gptimer_init(uint64_t value, gptimer_alarm_cb_t func, bool reload = 0, uint8_t priority = 3);
