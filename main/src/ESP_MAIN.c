@@ -14,15 +14,25 @@
 #define ARDUINO_ISR_ATTR
 #define ARDUINO_ISR_FLAG (0)
 #endif
-#define INPUT 0x01
-#define OUTPUT            0x03
-#define PULLUP            0x04
-#define INPUT_PULLUP      0x05
-#define PULLDOWN          0x08
-#define INPUT_PULLDOWN    0x09
-#define OPEN_DRAIN        0x10
-#define OUTPUT_OPEN_DRAIN 0x13
-#define ANALOG            0xC0
+#define INPUT				0x01
+#define OUTPUT				0x03
+#define PULLUP				0x04
+#define INPUT_PULLUP		0x05
+#define PULLDOWN			0x08
+#define INPUT_PULLDOWN		0x09
+#define OPEN_DRAIN			0x10
+#define OUTPUT_OPEN_DRAIN	0x13
+#define ANALOG				0xC0
+
+FORCE_INLINE_ATTR intptr_t esp_cpu_get_call_addr(intptr_t return_address) {
+#ifdef __XTENSA__
+    return return_address - 3;
+#else
+    return return_address - 4;
+#endif
+}
+#define FUNC_ADDRESS (esp_cpu_get_call_addr((intptr_t)__builtin_return_address(0)))
+#define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","0x%08x",FUNC_ADDRESS)
 
 #ifdef __cplusplus
 extern "C" {
@@ -104,12 +114,12 @@ esp_ota_img_states_t img_state(bool valid) {
 	const esp_partition_t* cur_part = esp_ota_get_running_partition();
 	esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
 	esp_err_t ret = esp_ota_get_state_partition(cur_part, &ota_state);
-	if(ret) { ESP_LOGE("ota", "get_state 0x%x", ret); }
- 	ESP_EARLY_LOGI("ota", "%s state: %lu%s", cur_part->label, ota_state, 
+	if(ret) { ESP_LOGE("ota", "0x%08x - 0x%X", FUNC_ADDRESS, ret); }
+ 	ESP_LOGI("ota", "'%s' state: %lX%s", cur_part->label, ota_state, 
 		ota_state == ESP_OTA_IMG_PENDING_VERIFY ? " PENDING_VERIFY" : "");
 	if(valid && (ota_state == ESP_OTA_IMG_PENDING_VERIFY)) { 
 		ret = esp_ota_mark_app_valid_cancel_rollback(); 
-		ESP_EARLY_LOGI("ota", "app_valid 0x%x", ret);
+		ESP_LOGI("ota", "app_valid 0x%x", ret);
 	}
 	return ota_state;
 }
@@ -134,6 +144,13 @@ esp_err_t esp_timer_start(esp_timer_handle_t handle, uint64_t period) {
 	if (esp_timer_is_active(handle)) return esp_timer_restart(handle, period);
 	return esp_timer_start_once(handle, period);
 }
+uint64_t esp_timer_period(esp_timer_handle_t handle) {
+	uint64_t result;
+	if(!esp_timer_get_period(handle, &result)) return result;
+	return 0;
+}
+
+
 
 esp_err_t
 gptimer_alarm(gptimer_handle_t handle, uint64_t value, bool reload, uint64_t count) {
