@@ -3,6 +3,7 @@
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 extern "C" void app_main() {
 	nvs_init();
+	nvs_read_sets();
 	//read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
 	pinMode(13, OUTPUT);
@@ -16,10 +17,9 @@ extern "C" void app_main() {
 	nvs_test("cal_data");
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
 	xTaskCreate(usb_cdc_task, "cdc", 4096, &uartBuffer, 5, nullptr);
+										
 	//extern void uart_init(); uart_init();
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
-	//pinMode(12, OUTPUT);//led_init();
-	//delay(5000); nvs_test(); //nvsEraseAll(NULL);
 #else
 static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT);
 static_assert(!configGENERATE_RUN_TIME_STATS);
@@ -28,10 +28,9 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
    	{const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL };
 	ESP_ERROR_CHECK(gpio_config(&conf));}
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
-	nvs_read_sets();
 //#ifdef CONFIG_FACTORY_FIRMWARE
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
-	wifi_init(); return;
+	if(read_noinit()) { wifi_init(); return; }
 //#else
 #ifdef CONFIG_GENERIC_PATCHER
 	conf.pin_bit_mask = BIT(PIN_LINE); conf.mode = GPIO_MODE_INPUT;
@@ -55,12 +54,6 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 //#endif
 }
 
-void fun() <%
-%:ifdef DEBUG_ENABLE
-	__unused char buf<::> = "Инсульт шлюха";
-%:endif
-%>
-
 static void wifi_init() {
 	ESP_LOGI(TAG, "Run factory firmware\n");
 	h_timer_wifi = esp_timer_new([](void*){ 
@@ -81,68 +74,6 @@ static void wifi_init() {
 	if(!wifi_sta_wait_conn()) return;
 	esp_log_level_set("wifi", ESP_LOG_DEBUG);
 #endif
-}
-
-static void uart_event_task(void *arg) {
-	static const char * TAG = "UART";
-    uart_event_t event; size_t buffered_size;
-     //assert(buf);
-    for (uint8_t* buf = (uint8_t*) arg;;) {
-        //Waiting for UART event.
-        if (xQueueReceive(uart_queue, (void *)&event, (TickType_t)portMAX_DELAY)) {
-            //bzero(buf, RD_BUF_SIZE);
-            ESP_LOGI(TAG, "uart[%d] event:", UART_PORT);
-            switch (event.type) { //Event of UART receiving data
-            /*We'd better handler data event fast, there would be much more data events than
-            other types of events. If we take too much time on data event, the queue might
-            be full.*/
-            case UART_DATA:
-                ESP_LOGI(TAG, "data.size: %d", event.size);
-                uart_read_bytes(UART_PORT, buf, event.size, portMAX_DELAY);
-				buf[event.size] = '\0'; ESP_LOGI(TAG, "%s", buf);
-                //ESP_LOGI(TAG, "[DATA EVT]:"); //uart_write_bytes(UART_PORT, (const char*) buf, event.size);
-                break;
-            case UART_FIFO_OVF: //HW FIFO overflow detected
-                ESP_LOGI(TAG, "hw fifo overflow");
-                // If fifo overflow happened, you should consider adding flow control for your application.
-                // The ISR has already reset the rx FIFO,
-                // As an example, we directly flush the rx buffer here in order to read more data.
-                uart_flush_input(UART_PORT);
-                xQueueReset(uart_queue);
-                break;
-            case UART_BUFFER_FULL: //UART ring buffer full
-                ESP_LOGI(TAG, "ring buffer full");
-                // If buffer full happened, you should consider increasing your buffer size
-                // As an example, we directly flush the rx buffer here in order to read more data.
-                uart_flush_input(UART_PORT);
-                xQueueReset(uart_queue);
-                break;
-            case UART_BREAK: ESP_LOGI(TAG, "uart rx break"); break;
-            case UART_PARITY_ERR: ESP_LOGI(TAG, "uart parity error");break;
-            case UART_FRAME_ERR: ESP_LOGI(TAG, "uart frame error"); break;
-            case UART_PATTERN_DET: {
-                uart_get_buffered_data_len(UART_PORT, &buffered_size);
-                int pos = uart_pattern_pop_pos(UART_PORT);
-                ESP_LOGI(TAG, "[PATTERN DETECTED] pos: %d, buffered size: %d", pos, buffered_size);
-                if (pos != -1) {
-					uart_read_bytes(UART_PORT, buf, pos, pdMS_TO_TICKS(100));
-                    uint8_t pat[PATTERN_CHR_NUM + 1] = {}; //memset(pat, 0, sizeof(pat));
-                    uart_read_bytes(UART_PORT, pat, PATTERN_CHR_NUM, pdMS_TO_TICKS(100));
-                    ESP_LOGI(TAG, "read data: %s", buf); ESP_LOGI(TAG, "read pat: %s", pat);
-                } else {
-					// There used to be a UART_PATTERN_DET event, but the pattern position queue is full so that it can not
-                    // record the position. We should set a larger queue size.
-                    // As an example, we directly flush the rx buffer here.
-                    uart_flush_input(UART_PORT);
-                }
-			} break;
-            default:
-                ESP_LOGW(TAG, "uart event type: %d", event.type);
-                break;
-            }
-        }
-    } //free(buf); buf = NULL; 
-	vTaskDelete(NULL);
 }
 
 static void usb_cdc_task(void *arg) {
@@ -168,32 +99,9 @@ static void usb_cdc_task(void *arg) {
     }
 }
 
-void uart_init() {
-	static const uart_config_t uart_config = {
-        .baud_rate = 115200,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-	const int uart_queue_len = 16;
-    //Install UART driver, and get the queue.
-    uart_driver_install(UART_PORT, UART_BUF_SIZE, 0, uart_queue_len, &uart_queue, 0);
-    uart_param_config(UART_PORT, &uart_config);
-    uart_set_pin(UART_PORT, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    
-	uart_enable_pattern_det_baud_intr(UART_PORT, '+', PATTERN_CHR_NUM, 9, 0, 0);
-    uart_pattern_queue_reset(UART_PORT, uart_queue_len);
-	//Create a task to handler UART event from ISR
-	TaskHandle_t h_uart_event;
-	xTaskCreate(uart_event_task, "uart_event", 3072, &uartBuffer, 12, &h_uart_event);
-	//uart_tx_chars
-}
-
 static void mainTask(void * arg) {
-	h_main_task = xTaskGetCurrentTaskHandle(); 
-#ifdef	DEBUG_ENABLE
+	h_main_task = xTaskGetCurrentTaskHandle();
+//#ifdef	DEBUG_ENABLE
 	printHeapInfo(); //ble_store_clear();
 	for(;;) {
 		switch (ulTaskNotifyTake(1,portMAX_DELAY)) { 
@@ -207,7 +115,7 @@ static void mainTask(void * arg) {
 		case NOTIFY_TIME: break;
 		} 
 	}
-#endif
+//#endif
 }
 
 static void isr_handler() {
@@ -260,10 +168,10 @@ void nvs_write_sets(nvsApi nvs) {
 
 void nvs_read_sets() {
 	if (img_state() == ESP_OTA_IMG_PENDING_VERIFY) {
-			h_timer_valid = esp_timer_new([](void*){
-				ESP_LOGW(TAG, "TIMER_OTA_VALID min %lu", uint32_t(TIMER_OTA_VALID / 1000000)); 
-				esp_restart();});
-			assert(h_timer_valid); esp_timer_start_once(h_timer_valid, TIMER_OTA_VALID);
+		h_timer_valid = esp_timer_new([](void*){
+			ESP_LOGW(TAG, "TIMER_OTA_VALID min %lu", uint32_t(TIMER_OTA_VALID / 1000000)); 
+			esp_restart();});
+		assert(h_timer_valid); esp_timer_start_once(h_timer_valid, TIMER_OTA_VALID);
 	}
 	nvsApi nvs(NVS_SPACE_SETS, NVS_READWRITE);
 	auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets));
@@ -272,7 +180,7 @@ void nvs_read_sets() {
 		if (crc == sets.crc) {
 			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
 			else { /* timer_patch_off_cb((void*)1); */ }; //dont write
-			
+			return;
 		} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
 	} else { CHECK_(ret); } //alarm_on(false);
 	sets = {}; 
@@ -326,10 +234,9 @@ void set_boot_partition(esp_partition_subtype_t type) {
 }
 
 void revoke_ota_rollback() {
-	if (!esp_ota_mark_app_valid_cancel_rollback()) {
-		if (!h_timer_valid) return;
-		esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
-	}
+	esp_ota_mark_app_valid_cancel_rollback();
+	if (!h_timer_valid) return;
+	esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
 }
 
 void parse_adv_cb(cbyte* data, byte len) {
@@ -368,7 +275,8 @@ void parse_rx_data(const ble_gap_event* event) {
 	uint8_t val = buf->om_data[4];
 	switch (val) {
 	case OTA_KEY:	//ESP_ERROR_CHECK(nimble_port_stop());
-		set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
+		write_noinit(1);
+		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 		ESP_LOGI(TAG, "reboot to FACTORY...");
 	case RESTART_KEY: ESP_LOGI(TAG, "RESTART"); esp_restart(); 
 		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
@@ -470,8 +378,8 @@ uint32_t generate_salt() {
 	uint32_t sec = xTaskGetTickCount();
 	if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) {
 #if !_ESP_LOG_ENABLED(3)
-		if(last_change != __INT32_MAX__)
-			{ ble_delete_all_peers(&bonded_addr); }
+		if(last_change != __INT32_MAX__)//{ ble_delete_all_peers(&bonded_addr); } 
+		ble_gap_terminate();
 #endif
 		last_change = sec;
 		salt = time(NULL); 
