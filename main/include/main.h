@@ -99,18 +99,11 @@ byte scan_key[32] = DEF_BLE_SCAN_DATA;
 uint8_t pass_key_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(pass_key)); //sizeof(DEF_BLE_PASS)-1;
 uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
 
-
-__unused static QueueHandle_t uart_queue;
 uint8_t uartBuffer[UART_BUF_SIZE];
 //static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
 static sets_t sets;
-/*
-static struct bond_mac_s {
-	ble_addr_t arr;
-	byte crc;
-} bonded_addr __attribute__((section(".noinit." "1")));
-static_assert(sizeof(bond_mac_s) == 8);*/
+__NOINIT_ATTR static sets_t sets_noinit;
 
 static void wifi_init();
 __unused static void mainTask(void * = NULL);
@@ -135,15 +128,11 @@ esp_err_t wifi_timer_reset(uint32_t ms) { return esp_timer_start(h_timer_wifi, m
 
 bool read_bonded_mac();
 //esp_err_t save_bonded_mac(const ble_addr_t &);
-void read_noinit();
-void write_noinit(byte val);
 void nvs_read_sets();
 void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETS, NVS_READWRITE));
 esp_err_t save_auth_data();
 void read_auth_data();
 
-void update_start_cb() { sets.upd = 0; };
-void update_finish_cb() { sets.upd = 1; nvs_write_sets(); };
 void set_boot_partition(esp_partition_subtype_t);
 void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 void revoke_ota_rollback();
@@ -355,15 +344,17 @@ bool wifi_sta_wait_conn() {
 	return false;
 }
 
-void read_noinit() {
-	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets));
-	if(crc16_le(0, (byte*)&sets, 2) == sets.crc) {
-	} else { sets = {}; ESP_LOGW(TAG, "noinit crc");}; 
-	//++sets.count;
-	sets.crc = crc16_le(0, (byte*)&sets, 2);
+byte read_noinit() {
+	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
+	if(crc_impl(sets_noinit) == sets_noinit.crc) {
+		return sets_noinit.upd;
+	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
+	return 0;
 }
 
 void write_noinit(byte val) {
-	sets.upd = val;
-	sets.crc = crc16_le(0, (byte*)&sets, 2); ESP_LOGD(TAG,"noinit %u, %u, %04X", sets.patch, sets.upd, sets.crc);
+	sets_noinit.upd = val;
+	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 }
+
+void set_main_partition() { write_noinit(0); }
