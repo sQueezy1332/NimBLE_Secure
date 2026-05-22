@@ -100,15 +100,17 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 		wifi_timer_start();
 		}
 		break;
-	case WIFI_EVENT_HOME_CHANNEL_CHANGE: ESP_LOGI(TAG_STA, "HOME_CHANNEL_CHANGE"); break;
+	case WIFI_EVENT_HOME_CHANNEL_CHANGE: ESP_LOGI(TAG_AP, "HOME_CHANNEL_CHANGE"); break;
 	case WIFI_EVENT_AP_WRONG_PASSWORD: ESP_LOGI(TAG_AP, "WRONG_PASSWORD"); break;
 #endif
 	default:
 		ESP_LOGW(WIFI_EVENT, "event_id %d", event_id); 
+		//HOME_CHANNEL_CHANGE 43
 	}
 }
 
-static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
 	switch (event_id) { 
 #ifdef STATION_MODE						/* Station*/
 	case IP_EVENT_STA_GOT_IP: {
@@ -127,7 +129,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t eve
 		xEventGroupSetBits(h_group_wifi, WIFI_AP_STAIPASSIGNED);
 	}
 	break;
-	case IP_EVENT_NETIF_UP: ESP_LOGI(TAG, "NETIF_UP"); break;
+	case IP_EVENT_NETIF_UP: ESP_LOGI(TAG_AP, "NETIF_UP"); break;
 #endif
 	default: //IP_EVENT_TX_RX = 8 //IP_EVENT_NETIF_UP = 9 //IP_EVENT_NETIF_DOWN = 10
 		ESP_LOGW(IP_EVENT, "event_id %d", event_id); 
