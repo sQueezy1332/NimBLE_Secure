@@ -13,15 +13,16 @@
 extern "C" {
 #endif
 struct ble_gap_event; struct ble_gatt_register_ctxt;
-void gatt_svc_init(void);
+void gatt_svr_init(void);
 /* Public function declarations */
 
 //void clear_characteristic();
 //void set_encryption();
+extern uint8_t get_heart_rate();
+extern void update_heart_rate();
 bool need_notify();
 void send_alarm_notify();
-
-void send_heart_rate_notify(void);
+void send_heart_rate_notify();
 /*
  *  Handle GATT attribute register events
  *      - Service register event
