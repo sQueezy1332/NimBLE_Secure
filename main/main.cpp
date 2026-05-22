@@ -2,24 +2,21 @@
 #include "main.h"
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 extern "C" void app_main() {
-	nvs_init();
-	nvs_read_sets();
-	//read_noinit();  //0x253D7465 == crc8 //609862 //570586
+	nvs_init(); //read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
 	pinMode(13, OUTPUT);
-	delay(3000);
+	//delay(2000);
 	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
 	printHeapInfo();
-	esp_log_level_set("*", ESP_LOG_DEBUG);
+	esp_log_level_set("*", ESP_LOG_DEBUG); esp_log_level_set("efuse", ESP_LOG_INFO);
 	esp_log_level_set("nvs", ESP_LOG_INFO);esp_log_level_set("wifi", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
 	totp_test();
 	nvs_test("cal_data");
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
-	xTaskCreate(usb_cdc_task, "cdc", 4096, &uartBuffer, 5, nullptr);
-										
-	//extern void uart_init(); uart_init();
-	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
+	xTaskCreate(usb_cdc_task, "cdc", 4096, NULL, 3, NULL);
+	vTaskPrioritySet(NULL, 15);
+	//auto heart = esp_timer_new([](void*){ update_heart_rate(); send_heart_rate_notify();}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
 #else
 static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT);
 static_assert(!configGENERATE_RUN_TIME_STATS);
@@ -30,7 +27,7 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
 //#ifdef CONFIG_FACTORY_FIRMWARE
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
-	if(read_noinit()) { wifi_init(); return; }
+			if(read_noinit()) { wifi_init(); return; }
 //#else
 #ifdef CONFIG_GENERIC_PATCHER
 	conf.pin_bit_mask = BIT(PIN_LINE); conf.mode = GPIO_MODE_INPUT;
@@ -40,11 +37,12 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); enableInterrupt(PIN_LINE);
 #endif
 	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
+	nvs_read_sets();
 	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	ESP_ERROR_CHECK(nimble_port_init());
-	gap_init();
-	gatt_svc_init();
 	ble_hs_cfg_init();
+	gap_init();
+	gatt_svr_init();
 	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 	#if PIN_LED_MASK
@@ -68,7 +66,7 @@ static void wifi_init() {
 #endif
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
-	//ap_set_dns_addr(h_netif_ap,h_netif_sta);  
+	//ap_set_dns_addr(h_netif_ap,h_netif_sta);
 #ifdef DEBUG_ENABLE
 	ESP_LOGI(TAG, "WiFi started, waiting for connection...");
 	if(!wifi_sta_wait_conn()) return;
@@ -78,31 +76,33 @@ static void wifi_init() {
 
 static void usb_cdc_task(void *arg) {
 	static const char* TAG = "CDC";
-	static uint8_t Buffer[CDC_BUF_SIZE];
+	static char Buffer[CDC_BUF_SIZE] {};
 	usb_serial_jtag_driver_config_t usb_serial_jtag_config = {CDC_BUF_SIZE, CDC_BUF_SIZE};
-	int ret = usb_serial_jtag_driver_install(&usb_serial_jtag_config);ESP_ERROR_CHECK(ret);
-	for (uint8_t* data = Buffer;;) {
+	int ret = usb_serial_jtag_driver_install(&usb_serial_jtag_config); ESP_ERROR_CHECK(ret);
+	for (auto* data = Buffer;;) {
         int len = usb_serial_jtag_read_bytes(data, (CDC_BUF_SIZE - 1), portMAX_DELAY);
-        if (!len) continue;
 		if (len <= 3) {
 			switch (*data) {
 				case 'T': print_task_list(); continue;
 				case 'D': ret = ble_store_clear();
-					ESP_LOGI(TAG, "ble_store_clear %d"); continue;
-				case 'V': ESP_LOGI(TAG, "VALID"); revoke_ota_rollback();
+					ESP_LOGI(TAG, "ble_store_clear %d"); continue; //329
+				case 'V': revoke_ota_rollback();
+				case 'R': ESP_EARLY_LOGW(TAG, " esp_restart()"); esp_restart();
 					continue;
 			}
 		}
-		ESP_LOG_BUFFER_HEX(TAG, data, len);
+		data[len] = '\0'; ESP_LOGW(TAG, "%s", data);
+		//ESP_LOG_BUFFER_HEX(TAG, data, len);
+		extern void sim_print_nolog(const char*, size_t); sim_print_nolog(data, len);
 		//usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(20));
-		//data[len] = '\0'; ESP_LOGW(TAG, "%s", data);
     }
 }
 
 static void mainTask(void * arg) {
 	h_main_task = xTaskGetCurrentTaskHandle();
-//#ifdef	DEBUG_ENABLE
+#ifdef	DEBUG_ENABLE
 	printHeapInfo(); //ble_store_clear();
+#endif
 	for(;;) {
 		switch (ulTaskNotifyTake(1,portMAX_DELAY)) { 
 		//case OTA: vTaskSuspend(ble_handle);
@@ -115,7 +115,7 @@ static void mainTask(void * arg) {
 		case NOTIFY_TIME: break;
 		} 
 	}
-//#endif
+
 }
 
 static void isr_handler() {
@@ -150,18 +150,10 @@ void ble_delete_all_peers() {
 	}
 #endif
 }
-/*
-bool read_bonded_mac() {
-	byte crc = crc8_le(0, (byte*)&bonded_addr, 7);
-	if(bonded_addr.crc == crc) return true;
-	bonded_addr = {};
-	//bonded_addr.crc = crc8_le(0, (byte*)&bonded_addr, 7);
-	return false;
-}*/
 
 void nvs_write_sets(nvsApi nvs) {
 	sets.crc = crc_impl(sets); 
-	ESP_LOGD("NVS","patch %u, upd %u, val %u, crc %02X", sets.patch, sets.upd, sets.flag, sets.crc);
+	ESP_LOGD("NVS","patch %u, upd %u, flag %u, crc %02X", sets.patch, sets.upd, sets.flag, sets.crc);
 	CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_OTA, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
@@ -173,31 +165,40 @@ void nvs_read_sets() {
 			esp_restart();});
 		assert(h_timer_valid); esp_timer_start_once(h_timer_valid, TIMER_OTA_VALID);
 	}
-	nvsApi nvs(NVS_SPACE_SETS, NVS_READWRITE);
-	auto ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&sets));
+	nvsApi nvs(NVS_SPACE_SETS, NVS_READWRITE); sets_t temp;
+	esp_err_t ret = nvs_get_u32(nvs, NVS_KEY_OTA, reinterpret_cast<uint32_t*>(&temp));
 	if (ret == ESP_OK) {
-		auto crc =  crc_impl(sets);
-		if (crc == sets.crc) {
-			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
+		auto crc =  crc_impl(temp);
+		if (crc == temp.crc) {
+			sets = temp;
+			if(temp.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
 			else { /* timer_patch_off_cb((void*)1); */ }; //dont write
 			return;
 		} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
 	} else { CHECK_(ret); } //alarm_on(false);
-	sets = {}; 
+	sets = {};
 __unused ota: nvs_write_sets(nvs);
 }
 
 void read_auth_data() {
-	nvsApi handle; size_t required_size;
-	CHECK_VOID(handle.begin(NVS_SPACE_SETS, NVS_READONLY));
-	CHECK_VOID(nvs_get_blob(handle, NVS_KEY_BLE_PASS, NULL, &required_size));
-	if(required_size < 16 || required_size > sizeof(pass_key)) return;
-	CHECK_VOID(nvs_get_blob(handle, NVS_KEY_BLE_PASS, pass_key, &required_size));
-	pass_key_len = required_size;
-	CHECK_VOID(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, NULL, &required_size));
-	if(required_size < 8 || required_size > sizeof(scan_key)) return;
-	CHECK_VOID(nvs_get_blob(handle, NVS_KEY_SCAN_DATA, scan_key, &required_size));
-	scan_key_len = required_size;
+	nvsApi handle; size_t required_size; esp_err_t ret;
+	ret = handle.begin(NVS_SPACE_SETS, NVS_READONLY); if (ret) { CHECK_(ret); return; }
+	if((ret = nvs_get_blob(handle, NVS_KEY_BLE_PASS, NULL, &required_size)) == ESP_OK) {
+		if(required_size >= 16 && required_size <= sizeof(pass_key)) {
+			if((ret = nvs_get_blob(handle, NVS_KEY_BLE_PASS, pass_key, &required_size)) == ESP_OK) {
+				pass_key_len = required_size;
+				ESP_LOGI(TAG, "pass_key readed");
+			}
+		}
+	} CHECK_(ret);
+	if((ret = nvs_get_blob(handle, NVS_KEY_SCAN_DATA, NULL, &required_size)) == ESP_OK) {
+		if(required_size >= 8 && required_size <= sizeof(scan_key)) {
+			if((ret = nvs_get_blob(handle, NVS_KEY_SCAN_DATA, scan_key, &required_size)) == ESP_OK){
+				scan_key_len = required_size;
+				ESP_LOGI(TAG, "scan_key readed");
+			}
+		}
+	} CHECK_(ret);
 }
 
 esp_err_t save_auth_data() {
@@ -234,12 +235,13 @@ void set_boot_partition(esp_partition_subtype_t type) {
 }
 
 void revoke_ota_rollback() {
+	ESP_LOGI(TAG, "revoke_ota_rollback()");
 	esp_ota_mark_app_valid_cancel_rollback();
 	if (!h_timer_valid) return;
 	esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
 }
 
-void parse_adv_cb(cbyte* data, byte len) {
+void parse_adv_cb(const uint8_t* data, uint8_t len) {
 	//cbyte len = *data, type = data[1], size = scan_key_len;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
 		//extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
@@ -262,6 +264,7 @@ void parse_rx_data(const ble_gap_event* event) {
 	enum { 
 		OFFSET = DEF_CMD_OFFSET,
 		OTA_KEY,
+		MAIN_KEY,
 		RESTART_KEY,
 		VALID_KEY,
 		SAVE_MAC,
@@ -274,12 +277,14 @@ void parse_rx_data(const ble_gap_event* event) {
 	//auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
 	uint8_t val = buf->om_data[4];
 	switch (val) {
-	case OTA_KEY:	//ESP_ERROR_CHECK(nimble_port_stop());
+	case OTA_KEY://ESP_ERROR_CHECK(nimble_port_stop());
 		write_noinit(1);
 		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 		ESP_LOGI(TAG, "reboot to FACTORY...");
 	case RESTART_KEY: ESP_LOGI(TAG, "RESTART"); esp_restart(); 
 		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
+	case MAIN_KEY: write_noinit(0);
+		break;
 	case VALID_KEY: revoke_ota_rollback();
 		break;
 	case SAVE_MAC: save_bonding(event->notify_rx.conn_handle);
@@ -313,7 +318,7 @@ std::unique_ptr<char[]> task_list(size_t* len) {
 	return ptr;
 }
 
-template <bool big_endian, char separ> int bytes_to_str(const byte* src, char* dest, size_t data_size) {
+template <bool big_endian, char separ> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size) {
 	if(data_size == 0) return 0; 
 	int i; char inc; char* ptr = dest;
 	if(big_endian){ i = 0; --data_size; inc = 1;}
@@ -365,7 +370,7 @@ rdy:            dest[i] = result;
 void set_ble_device_name() {
 	static_assert(!MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)); static_assert(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH) >=16);
 	constexpr int name_len = sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1; static_assert(name_len >= 7);
-	char* name = const_cast<char*>(ble_svc_gap_device_name()); byte mac[8];
+	char* name = const_cast<char*>(ble_svc_gap_device_name()); uint8_t mac[8];
 	*(name += name_len) = '-';
 	CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
 	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
@@ -378,7 +383,7 @@ uint32_t generate_salt() {
 	uint32_t sec = xTaskGetTickCount();
 	if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) {
 #if !_ESP_LOG_ENABLED(3)
-		if(last_change != __INT32_MAX__)//{ ble_delete_all_peers(&bonded_addr); } 
+		//if(last_change != __INT32_MAX__)//{ ble_delete_all_peers(&bonded_addr); }
 		ble_gap_terminate();
 #endif
 		last_change = sec;
