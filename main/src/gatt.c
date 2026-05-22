@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
-/* Includes */
-
 //#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "common.h"
 #include "gatt.h"
@@ -56,6 +49,7 @@ sub_attr_t subs_conn[CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
 
 void set_encryption() {  led_chr.ch.encrypted = 1; }
 bool need_notify() { return led_chr.ch.send; }
+
 /* TAG services table */
 const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 	{	// Heart rate service
@@ -106,7 +100,7 @@ static int heart_rate_chr_access(uint16_t conn_handle, uint16_t attr_handle, str
 	case BLE_GATT_ACCESS_OP_READ_CHR: {
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "read", conn_handle, attr_handle);
-		}	ESP_RETURN_ON_ERROR(os_mbuf_append(ctxt->om, &(uint8_t [2]) {0, get_heart_rate()}, 2), TAG, "");
+		}	CHECK_RET(os_mbuf_append(ctxt->om, &(uint8_t [2]) {0, get_heart_rate()}, 2));
 			return 0;
 	} break;
 	default: ESP_LOGW(TAG, "opcode: %u", ctxt->op);
@@ -133,7 +127,7 @@ static int led_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "read", conn_handle, attr_handle);
 		}
-		ESP_RETURN_ON_ERROR(os_mbuf_append(ctxt->om, &(uint8_t [1]) { impl_io_get() }, 1), TAG,"");
+		CHECK_RET(os_mbuf_append(ctxt->om, &(uint8_t [1]) { impl_io_get() }, 1));
 		return 0; 
 		}
 	break;
@@ -154,17 +148,14 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 			size_t len = ctxt->om->om_len; uint16_t out_len; ESP_LOGI(TAG, "om_len %u", len); 
 			CHECK_RET(ble_hs_mbuf_to_flat(ctxt->om->om_data, Buffer, sizeof(Buffer), &out_len));
 			ESP_LOGI(TAG, "%u", ctxt->om->om_data[0]);
-			return 0;
 		}
-		break;
+		return 0;
 	case BLE_GATT_ACCESS_OP_READ_CHR: { /* READ characteristic event */
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "read", conn_handle, attr_handle);
 		}
-		ESP_RETURN_ON_ERROR(os_mbuf_append(ctxt->om, &(uint8_t [1]) { impl_io_get() }, 1), TAG,"");
-		return 0; 
-		}
-	break;
+		CHECK_RET(os_mbuf_append(ctxt->om, &(uint8_t [1]) { impl_io_get() }, 1));
+		} return 0; 
 	default: ESP_LOGW(TAG, "opcode: %u", ctxt->op);
 	}
 	return BLE_ATT_ERR_UNLIKELY;
@@ -180,7 +171,10 @@ void gatt_svr_init(void) {
 
 void send_alarm_notify() { 
 	for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
-		if(subs_conn[i].io) { CHECK_VOID(ble_gatts_notify(i, h_heart_chr)); }
+		if(subs_conn[i].io) { 
+			CHECK_VOID(ble_gatts_notify(i, h_heart_chr));
+			ESP_LOGI(TAG, "send_alarm_notify %u", i);
+		}
 	}
 }
 
@@ -188,7 +182,16 @@ void send_heart_rate_notify() {
  		for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
 			if(subs_conn[i].heart) { 
 				CHECK_VOID(ble_gatts_notify(i, h_heart_chr));
-				ESP_LOGW(TAG, "send_heart_rate_notify %u", i);
+				ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
+			}
+		}
+}
+
+void send_spp_notify() {
+ 		for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
+			if(subs_conn[i].spp) { 
+				CHECK_VOID(ble_gatts_notify(i, h_spp_chr));
+				ESP_LOGI(TAG, "send_spp_notify %u", i);
 			}
 		}
 }
