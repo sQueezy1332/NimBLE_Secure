@@ -98,13 +98,9 @@ esp_ota_img_states_t img_state(bool valid = false);
 #endif
 
 inline uint32_t getHeapSize() { return heap_caps_get_total_size(MALLOC_CAP_INTERNAL); }
-
 inline uint32_t getFreeHeap() { return heap_caps_get_free_size(MALLOC_CAP_INTERNAL); }
-
 inline uint32_t getMinFreeHeap() { return heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL); }
-
 inline uint32_t getMaxAllocHeap() { return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL); }
-
 inline void printHeapInfo() { heap_caps_print_heap_info(MALLOC_CAP_INTERNAL); }
 
 class nvsApi {
