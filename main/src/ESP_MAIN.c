@@ -114,12 +114,12 @@ esp_ota_img_states_t img_state(bool valid) {
 	const esp_partition_t* cur_part = esp_ota_get_running_partition();
 	esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
 	esp_err_t ret = esp_ota_get_state_partition(cur_part, &ota_state);
-	if(ret) { ESP_LOGE("ota", "0x%08x - 0x%X", FUNC_ADDRESS, ret); }
- 	ESP_LOGI("ota", "'%s' state: %lX%s", cur_part->label, ota_state, 
+	if(ret) { ESP_LOGE("img", "0x%08x err 0x%X", FUNC_ADDRESS, ret); }
+ 	ESP_LOGI("img", "'%s' state: %lX%s", cur_part->label, ota_state, 
 		ota_state == ESP_OTA_IMG_PENDING_VERIFY ? " PENDING_VERIFY" : "");
 	if(valid && (ota_state == ESP_OTA_IMG_PENDING_VERIFY)) { 
 		ret = esp_ota_mark_app_valid_cancel_rollback(); 
-		ESP_LOGI("ota", "app_valid 0x%x", ret);
+		ESP_LOGI("img", "app_valid 0x%x", ret);
 	}
 	return ota_state;
 }
