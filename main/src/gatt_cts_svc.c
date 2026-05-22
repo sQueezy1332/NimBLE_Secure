@@ -30,72 +30,74 @@ extern int ble_svc_cts_curr_time_validate(struct ble_svc_cts_curr_time curr_time
 extern int ble_svc_cts_local_time_info_validate(struct ble_svc_cts_local_time_info info);
 //extern void ble_svc_cts_time_updated();
 //}
+static const ble_uuid16_t SVC_CTS = BLE_UUID16_INIT(BLE_SVC_CTS_UUID16);
+static const ble_uuid16_t CHR_CURRENT_TIME = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_CURRENT_TIME);
+__unused static const ble_uuid16_t CHR_TIME_ZONE = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_LOCAL_TIME_INFO);
+static const ble_uuid16_t CHR_REF_TIME_INFO = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_REF_TIME_INFO);
+static const ble_uuid16_t CHR_DEVICE_TIME = BLE_UUID16_INIT(DEVICE_TIME_CHR);
 
 /* characteristic values */
 __unused static struct ble_svc_cts_local_time_info local_time_info_val = { .timezone = 4 * 3, .dst_offset = TIME_STANDARD };
 static struct ble_svc_cts_curr_time current_local_time_val; static_assert(sizeof(current_local_time_val) == 10);
 static struct ble_svc_cts_reference_time_info ref_time_info_val;
 
-/* Characteristic value handles */
-static uint16_t h_ble_svc_cts_curr_time;
-__unused static uint16_t h_ble_svc_cts_local_time_info;
-static uint16_t h_ble_svc_cts_ref_time;
-static uint16_t h_ble_chr_device_time;
+/* Characteristic attributes handles */
+static uint16_t h_curr_time;
+__unused static uint16_t h_time_zone_info;
+static uint16_t h_ref_time;
+static uint16_t h_device_time;
 
-void set_cts_unix(time_t now);
-time_t get_cts_unix() { return time(NULL); }
+static void set_cts_unix(time_t now);
+static time_t get_cts_unix() { return time(NULL); }
 static void fetch_current_time(struct ble_svc_cts_curr_time *ctime);
 __unused static void set_current_time(struct ble_svc_cts_curr_time* ctime);
-int fetch_local_time_info(struct ble_svc_cts_local_time_info *info) { return 0; }
-int set_local_time_info(struct ble_svc_cts_local_time_info info) { return 0; }
+__unused static int fetch_local_time_info(struct ble_svc_cts_local_time_info *info) { return 0; }
+__unused static int set_local_time_info(struct ble_svc_cts_local_time_info info) { return 0; }
 static void fetch_reference_time_info(struct ble_svc_cts_reference_time_info *info);
 /* Access function */
-static int ble_svc_cts_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
-
-static const ble_uuid16_t TAG_UUID16 = BLE_UUID16_INIT(BLE_SVC_CTS_UUID16);
-static const ble_uuid16_t CHR_UUID16_CURRENT_TIME = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_CURRENT_TIME);
-__unused static const ble_uuid16_t CHR_UUID16_LOCAL_TIME_INFO = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_LOCAL_TIME_INFO);
-static const ble_uuid16_t CHR_UUID16_REF_TIME_INFO = BLE_UUID16_INIT(BLE_SVC_CTS_CHR_UUID16_REF_TIME_INFO);
-static const ble_uuid16_t CHR_UUID16_DEVICE_TIME = BLE_UUID16_INIT(DEVICE_TIME_CHR);
+static int curr_time_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+__unused static int time_zone_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+static int reference_time_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+static int device_time_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
 
 __NOINIT_ATTR static time_t last_updated;
 __NOINIT_ATTR static time_t last_updated_crc;
 __NOINIT_ATTR static uint8_t adjust_reason;
 
 static const struct ble_gatt_svc_def ble_svc_cts_defs[] = { 
-    {       /*** Current Time Service. */
+    {	/* Current Time Service. */
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &TAG_UUID16.u,
+        .uuid = &SVC_CTS.u,
         .characteristics = (struct ble_gatt_chr_def[]) { 
-        { /*** Current Time characteristic */
-            .uuid = &CHR_UUID16_CURRENT_TIME.u,
-            .access_cb = ble_svc_cts_access,
+        {	/* Current Time characteristic */
+            .uuid = &CHR_CURRENT_TIME.u,
+            .access_cb = curr_time_chr_access,
             .flags = BLE_GATT_CHR_F_READ //| BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_AUTHEN | BLE_GATT_CHR_F_NOTIFY
-			,
-	        .val_handle = &h_ble_svc_cts_curr_time,
+			, .val_handle = &h_curr_time,
 	    }, 
 #ifdef TIME_ZONE_CHR
-		{ /*** Local info characteristic */
-            .uuid = &CHR_UUID16_LOCAL_TIME_INFO.u,
-            .access_cb = ble_svc_cts_access,
+		{	/* Local info characteristic */
+            .uuid = &CHR_TIME_ZONE.u,
+            .access_cb = time_zone_chr_access,
             .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_AUTHEN,//BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE_AUTHOR,
-            .val_handle = &h_ble_svc_cts_local_time_info,
+            .val_handle = &h_time_zone_info,
             
 	    }, 
 #endif
-		{ /*** Reference time info Characteristic */
-            .uuid = &CHR_UUID16_REF_TIME_INFO.u,
-            .access_cb = ble_svc_cts_access,
+		{	/* Reference time info Characteristic */
+            .uuid = &CHR_REF_TIME_INFO.u,
+            .access_cb = reference_time_chr_access,
             .flags = BLE_GATT_CHR_F_READ,
-            .val_handle = &h_ble_svc_cts_ref_time,
-        },  {
-            .uuid = &CHR_UUID16_DEVICE_TIME.u,
-            .access_cb = ble_svc_cts_access,
+            .val_handle = &h_ref_time,
+        },  
+		{
+            .uuid = &CHR_DEVICE_TIME.u,
+            .access_cb = device_time_chr_access,
             .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_AUTHEN,//BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE_ENC,
-            .val_handle = &h_ble_chr_device_time,
-        } , { 0, /* No more characteristics in this service. */ } 
+            .val_handle = &h_device_time,
+        }, { /* No more characteristics in this service. */ } 
         },
-    }, { 0, /* No more services. */ },
+    }, { /* No more services. */ },
 };
 
 static void set_noinit_values(time_t val) {
@@ -109,13 +111,12 @@ void gatt_cts_service_init() {
 	setenv("TZ", "MSK-3", 1);
 	tzset();
 	if(last_updated != (last_updated_crc - adjust_reason - 1)) 
-	{last_updated_crc = last_updated = 0; adjust_reason = 0;}
+	{last_updated_crc = last_updated = 0L; adjust_reason = 0;}
 	ESP_LOGI(TAG, "last_updated %lu", last_updated);
 }
 
 void set_cts_unix(time_t now) {
-    struct timeval64 tv_now = {.tv_sec = now };
-    settimeofday((struct timeval *)&tv_now, NULL);
+    settimeofday((struct timeval *)&(struct timeval64) {.tv_sec = now }, NULL);
 	adjust_reason = MANUAL_TIME_UPDATE_MASK;
     set_noinit_values(now);//gettimeofday(&last_updated,/*  &tmz */NULL);  /* set the last updated */
 	ESP_LOGI(TAG, "set_cts_unix %lu", now);
@@ -130,9 +131,8 @@ void set_current_time(struct ble_svc_cts_curr_time *ctime) {
         .tm_mon = ctime->et_256.d_d_t.d_t.month - 1,
         .tm_year= ctime->et_256.d_d_t.d_t.year - 1900,
         .tm_wday = ctime->et_256.d_d_t.day_of_week - 1,
-    };
-    struct timeval64 tv_now = {.tv_sec = mktime(&timeinfo) };
-    settimeofday((struct timeval *)&tv_now, NULL);
+    }; struct timeval64 tv_now = {.tv_sec = mktime(&timeinfo) };
+    settimeofday((struct timeval *)&(struct timeval64) {.tv_sec = mktime(&timeinfo) }, NULL);
 	adjust_reason = ctime->adjust_reason;
 	set_noinit_values(tv_now.tv_sec);  //gettimeofday(&last_updated, NULL);
 	ESP_LOGI(TAG, "%s tv_now %lu", __FUNCTION__, tv_now.tv_sec);
@@ -172,26 +172,24 @@ void fetch_reference_time_info(struct ble_svc_cts_reference_time_info *info) {
     uint32_t days_since_update = (tv_sec / 86400UL);
     if(days_since_update <= 255) {
 		info->days_since_update = days_since_update;
-        uint32_t hours_since_update = (tv_sec % 86400UL) / 3600;
+        uint32_t hours_since_update = (tv_sec - days_since_update) / 3600;//(tv_sec % 86400UL) / 3600;
         info->hours_since_update = hours_since_update;
     } else { info->hours_since_update = info->days_since_update = 255; }
     //adjust_reason = (CHANGE_OF_DST_MASK | CHANGE_OF_TIME_ZONE_MASK);  
 	ESP_LOGI(TAG, "%s last_updated %lu", __FUNCTION__, last_updated);
 }
 
-int ble_svc_cts_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-    ESP_LOGD(TAG, "%s  conn_handle %u attr_handle %u",ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR ? "WRITE_CHR" :  
-    ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR ? "READ_CHR"  : ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC ? "WRITE_DSC" :
-    ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "READ_DSC"  : "op?", conn_handle, attr_handle);
-    uint16_t uuid = ble_uuid_u16(ctxt->chr->uuid);
-    switch (uuid) {
-    case BLE_SVC_CTS_CHR_UUID16_CURRENT_TIME:
-        switch(ctxt->op) {
+int curr_time_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    //ESP_LOGD(TAG, "%s  conn_handle %u attr_handle %u",ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR ? "WRITE_CHR" :  
+    //ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR ? "READ_CHR"  : ctxt->op == BLE_GATT_ACCESS_OP_WRITE_DSC ? "WRITE_DSC" :
+    //ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC ? "READ_DSC"  : "op?", conn_handle, attr_handle);
+	if (attr_handle != h_curr_time) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+    switch(ctxt->op) {
         case BLE_GATT_ACCESS_OP_READ_CHR: {
             fetch_current_time(&current_local_time_val);
             CHECK_RET(os_mbuf_append(ctxt->om, &current_local_time_val, sizeof(current_local_time_val)));
-			}
-		return 0;// == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+		}
+		return 0;
 #ifdef CURRENT_TIME_WRITE
         case BLE_GATT_ACCESS_OP_WRITE_CHR: {
             struct ble_svc_cts_curr_time curr_time = {};
@@ -199,13 +197,18 @@ int ble_svc_cts_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
             CHECK_RET(ble_svc_cts_curr_time_validate(curr_time));
             set_current_time(&curr_time); 
 			current_local_time_val = curr_time;
-            ble_gatts_chr_updated(attr_handle); /* schedule notifications for subscribed peers */
-            } return 0;
+            //ble_gatts_chr_updated(attr_handle); /* schedule notifications for subscribed peers */
+        } return 0;
+		
 #endif	
-		} break;
-#ifdef TIME_ZONE_CHR
-    case BLE_SVC_CTS_CHR_UUID16_LOCAL_TIME_INFO:
-        switch(ctxt->op) {
+		default: return BLE_ATT_ERR_REQ_NOT_SUPPORTED;
+	}
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+int time_zone_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+	if (attr_handle != h_time_zone_info) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+    switch(ctxt->op) {
         case BLE_GATT_ACCESS_OP_READ_CHR: { ESP_LOGI(TAG, "get_local_tz");
             CHECK_RET(os_mbuf_append(ctxt->om, (void*)&local_time_info_val, sizeof(local_time_info_val)));
 		} return 0;
@@ -219,31 +222,37 @@ int ble_svc_cts_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
             /* set the adjust reason mask // notify the connected clients about the change in timezone and time */
             //current_local_time_val.adjust_reason |= (1 << 2) | (1 << 3);
 			/* notify the connected clients about the change in timezone and time */
-			ble_gatts_chr_updated(h_ble_svc_cts_curr_time);
-            } return 0;
-        } break;
-#endif
-    case BLE_SVC_CTS_CHR_UUID16_REF_TIME_INFO:
-        if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            fetch_reference_time_info(&ref_time_info_val);
-            CHECK_RET(os_mbuf_append(ctxt->om, &ref_time_info_val, sizeof(ref_time_info_val))); 
-            return 0;
-        } ESP_LOGW(TAG, "REF_TIME_INFO ctxt->op %u", ctxt->op); 
-		break;
-		//custom chr
-    case DEVICE_TIME_CHR:  
-        switch(ctxt->op) {
+			//ble_gatts_chr_updated(h_time_zone_info);
+        } return 0;
+		default: return BLE_ATT_ERR_REQ_NOT_SUPPORTED;
+    }
+	return BLE_ATT_ERR_UNLIKELY;
+}
+
+int reference_time_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+	if (attr_handle != h_ref_time) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+	if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        fetch_reference_time_info(&ref_time_info_val);
+        CHECK_RET(os_mbuf_append(ctxt->om, &ref_time_info_val, sizeof(ref_time_info_val))); 
+        return 0;
+    } else if(ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+	//ESP_LOGW(TAG, "REF_TIME_INFO ctxt->op %u", ctxt->op);
+	return BLE_ATT_ERR_REQ_NOT_SUPPORTED;
+}
+
+int device_time_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg){
+	if (attr_handle != h_device_time) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+	switch(ctxt->op) {
         case BLE_GATT_ACCESS_OP_READ_CHR: {
-            time_t val = get_cts_unix();
-            CHECK_RET(os_mbuf_append(ctxt->om, &val, sizeof(val)));
+            CHECK_RET(os_mbuf_append(ctxt->om, &(time_t) { get_cts_unix() }, sizeof(time_t)));
         } return 0;
         case BLE_GATT_ACCESS_OP_WRITE_CHR: {
             if(ctxt->om->om_len != sizeof(time_t)) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             set_cts_unix(*(time_t*)ctxt->om->om_data);
-			} return 0;
-        }
-        break;
-    default: ESP_LOGW(TAG, "ctxt->chr->uuid: %u", uuid); //assert(0);
+		} return 0;
+		default: return BLE_ATT_ERR_REQ_NOT_SUPPORTED;
     }
-    return BLE_ATT_ERR_UNLIKELY;
+	return BLE_ATT_ERR_UNLIKELY;
 }
+
+
