@@ -1,3 +1,10 @@
+/*
+ * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Unlicense OR CC0-1.0
+ */
+/* Includes */
+
 //#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "common.h"
 #include "gatt.h"
@@ -40,8 +47,6 @@ static struct gatt_svc_s {
 } led_chr; static_assert(sizeof(led_chr) == 8);
 
 struct gatt_svc_s heart_chr;
-
-uint8_t conn_handle_subs [CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
 
 sub_attr_t subs_conn[CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
 
@@ -109,7 +114,7 @@ static int heart_rate_chr_access(uint16_t conn_handle, uint16_t attr_handle, str
 }
 
 static int led_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-	static const char *TAG = "LED";
+	static const char *TAG = "IO";
 	if (attr_handle != h_led_chr) {  ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_WRITE_CHR: /* WRITE characteristic event */
@@ -146,7 +151,7 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "write",conn_handle, attr_handle);
 		}
 			size_t len = ctxt->om->om_len; uint16_t out_len; ESP_LOGI(TAG, "om_len %u", len); 
-			CHECK_RET(ble_hs_mbuf_to_flat(ctxt->om->om_data, Buffer, sizeof(Buffer), &out_len));
+			CHECK_RET(ble_hs_mbuf_to_flat(ctxt->om, Buffer, sizeof(Buffer), &out_len));
 			ESP_LOGI(TAG, "%u", ctxt->om->om_data[0]);
 		}
 		return 0;
@@ -170,7 +175,7 @@ void gatt_svr_init(void) {
 }
 
 void send_alarm_notify() { 
-	for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
+	for (size_t i = 1; i < sizeof(subs_conn); i++) {
 		if(subs_conn[i].io) { 
 			CHECK_VOID(ble_gatts_notify(i, h_heart_chr));
 			ESP_LOGI(TAG, "send_alarm_notify %u", i);
@@ -179,7 +184,7 @@ void send_alarm_notify() {
 }
 
 void send_heart_rate_notify() {
- 		for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
+ 		for (size_t i = 1; i < sizeof(subs_conn); i++) {
 			if(subs_conn[i].heart) { 
 				CHECK_VOID(ble_gatts_notify(i, h_heart_chr));
 				ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
@@ -188,7 +193,7 @@ void send_heart_rate_notify() {
 }
 
 void send_spp_notify() {
- 		for (size_t i = 1; i < sizeof(conn_handle_subs); i++) {
+ 		for (size_t i = 1; i < sizeof(subs_conn); i++) {
 			if(subs_conn[i].spp) { 
 				CHECK_VOID(ble_gatts_notify(i, h_spp_chr));
 				ESP_LOGI(TAG, "send_spp_notify %u", i);
@@ -197,12 +202,12 @@ void send_spp_notify() {
 }
 
 void clear_characteristic(size_t h_conn) {
-	if (h_conn >= sizeof(conn_handle_subs)) return; //BLE_ATT_ERR_UNLIKELY;
+	if (h_conn >= sizeof(subs_conn)) return; //BLE_ATT_ERR_UNLIKELY;
 	subs_conn[h_conn].val = 0;
 }
 
 static int set_sub_chr(size_t h_conn, int num, bool val) {
-	if (unlikely(h_conn >= sizeof(conn_handle_subs))) return BLE_ATT_ERR_UNLIKELY;
+	if (unlikely(h_conn >= sizeof(subs_conn))) return BLE_ATT_ERR_UNLIKELY;
 	//subs_conn[h_conn].encrypted = 1;
 	switch (num) {
 			case 1: subs_conn[h_conn].io = val;
