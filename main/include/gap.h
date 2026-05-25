@@ -1,10 +1,4 @@
 #pragma once
-/*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
-
 /* NimBLE GAP APIs */
 //#include "host/ble_gap.h"
 //#include "services/gap/ble_svc_gap.h"
@@ -25,7 +19,6 @@
 #define SHORT_NAME	    0x08
 #define COMPLETE_NAME	0x09
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -37,31 +30,13 @@ void ble_store_config_conf_init(); //CONFIG_BT_NIMBLE_NVS_PERSIST=y
 struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 
 struct ble_gap_event; struct os_mbuf; struct ble_gatt_register_ctxt;
 union ble_store_key; union ble_store_value; 
-#ifdef __cplusplus
-}
-#endif
 
 void ble_hs_cfg_init();
 int gap_init();
-void host_sync_cb();
-
 void ble_scan_init();
 void adv_init();
-int save_bonding(uint16_t conn_handle);
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-bool is_connection_encrypted(uint16_t);
-int gatt_svr_subscribe_cb(const ble_gap_event *);
-void gatt_svr_register_cb(struct ble_gatt_register_ctxt *, void *);
-void clear_characteristic(size_t);
-void set_encryption();
-void impl_io_on();
-void impl_io_off();
-#ifdef __cplusplus
-}
-#endif
+int save_bonding(uint16_t h_conn);
+int is_connection_encrypted(uint16_t h_conn);
 
 extern uint32_t get_pincode();
 extern void parse_adv_cb(const uint8_t*, uint8_t);
@@ -69,4 +44,7 @@ extern uint32_t generate_salt();
 extern void print_task_list();
 extern void set_ble_device_name();
 extern void unpatch_cb();
-extern void parse_rx_data(const ble_gap_event *);
+extern void parse_rx_data(const struct ble_gap_event*);
+#ifdef __cplusplus
+}
+#endif
