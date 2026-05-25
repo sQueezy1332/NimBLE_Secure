@@ -1,10 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
-/* Includes */
-
 //#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "common.h"
 #include "gatt.h"
