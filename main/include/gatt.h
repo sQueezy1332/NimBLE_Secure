@@ -1,8 +1,3 @@
-/*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
 #pragma once
 /* Includes */
 /* NimBLE GATT APIs */
@@ -13,16 +8,6 @@
 extern "C" {
 #endif
 struct ble_gap_event; struct ble_gatt_register_ctxt;
-void gatt_svr_init(void);
-/* Public function declarations */
-
-//void clear_characteristic();
-//void set_encryption();
-extern uint8_t get_heart_rate();
-extern void update_heart_rate();
-bool need_notify();
-void send_alarm_notify();
-void send_heart_rate_notify();
 /*
  *  Handle GATT attribute register events
  *      - Service register event
@@ -41,11 +26,23 @@ int gatt_svr_subscribe_cb(const struct ble_gap_event *event);
  *      2. Update NimBLE host GATT services counter
  *      3. Add GATT services to server
  */
+void gatt_svr_init(void);
 
-extern bool is_connection_encrypted(uint16_t conn_handle);
+int need_notify_io();
+int clear_connection(uint16_t);
+int set_encryption(uint16_t);
+int get_encryption(uint16_t);
+void send_alarm_notify();
+void send_heart_rate_notify();
+void send_spp_notify();
+
+//extern int is_connection_encrypted(uint16_t);
 extern void impl_io_on();
 extern void impl_io_off();
 extern int impl_io_get();
+
+extern uint8_t get_heart_rate();
+extern void update_heart_rate();
 #ifdef __cplusplus
 }
 #endif
