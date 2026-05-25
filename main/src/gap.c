@@ -1,5 +1,13 @@
+/*
+ * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Unlicense OR CC0-1.0
+ */
+/* Includes */
+
 #include "common.h"
 #include "gap.h"
+#include "gatt.h"
 #include "host/ble_gap.h"
 #include "services/gap/ble_svc_gap.h"
 #include "store/config/ble_store_config.h"
@@ -7,43 +15,44 @@
 static const char* TAG = "GAP";
 //#define RANDOM_ADDR
 __unused int RSSI;
+static uint8_t device_name_len;
 /* Private function declarations */
 const char* format_addr(const uint8_t addr[]) {
 	static char buf[18];
 	sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", addr[5], addr[4],addr[3], addr[2], addr[1], addr[0]);
 	return buf;
 }
-//extern uint8_t conn_handle_subs[CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
+
 void set_random_addr(void);
 static void print_conn_desc(struct ble_gap_conn_desc *);
 static int gap_event_handler(struct ble_gap_event *, void *);
-static void parse_adv_data(const uint8_t* data, uint8_t data_len);
+static void parse_adv_data(const uint8_t*, uint8_t);
 static void print_rx_data(const struct os_mbuf *);
-static void print_event_report(const ble_gap_disc_desc & disc);
-static void print_event_report(const ble_gap_ext_disc_desc & disc);
-static void print_event_report(const decltype(ble_gap_event::periodic_report) & rep);
-static void print_event_report(const decltype(ble_gap_event::periodic_sync) & rep);
-static void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep);
+static void print_event_report_ext(const struct ble_gap_ext_disc_desc*);
+static void print_event_report(const struct ble_gap_disc_desc*);
+//static void print_event_report(const decltype(ble_gap_event::periodic_report) & rep);
+//static void print_event_report(const decltype(ble_gap_event::periodic_sync) & rep);
+//static void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep);
 /* Private variables */
 __unused static bool synced;
 __unused static uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
 __unused static uint8_t addr_val[6] = {};
 __unused static uint8_t esp_uri[] = {BLE_GAP_URI_PREFIX_HTTPS, '/', '/', 'e', 's', 'p', 'r', 'e', 's', 's', 'i', 'f', '.', 'c', 'o', 'm'};
-ble_gap_conn_desc desc; //sizeof(ble_gap_conn_desc); //44
+struct ble_gap_conn_desc desc; //sizeof(ble_gap_conn_desc); //44
 /*
  * NimBLE applies an event-driven model to keep TAG service going
  * gap_event_handler is a callback function registered when calling
  * ble_gap_adv_start API and called when a TAG event arrives
  */
 static int gap_event_handler(struct ble_gap_event *event, void *arg) {
-	int& ret = (int&)arg;
+	int ret;
 	switch (event->type) {
 	case BLE_GAP_EVENT_CONNECT:
 		ESP_LOGI(TAG, "connection %s; status %d", event->connect.status ? "failed" : "established" ,event->connect.status);
 		if (event->connect.status == 0) {
 			if((ret = ble_gap_conn_find(event->connect.conn_handle, &desc))) return ret;
 			print_conn_desc(&desc);
-			ble_gap_upd_params params = { .itvl_min = desc.conn_itvl, .itvl_max = desc.conn_itvl, .latency = desc.conn_latency,
+			struct ble_gap_upd_params params = { .itvl_min = desc.conn_itvl, .itvl_max = desc.conn_itvl, .latency = desc.conn_latency,
 											.supervision_timeout = BLE_GAP_SUPERVISION_TIMEOUT_MS(1000),
 											.min_ce_len = 0 , .max_ce_len = 0 };
 			if((ret = ble_gap_update_params(event->connect.conn_handle, &params))) return ret;
@@ -53,18 +62,18 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	case BLE_GAP_EVENT_DISCONNECT: /* A connection was terminated, print connection descriptor */
 		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason);
 		if(event->disconnect.reason == 0x0216) break; //Terminated By Local Host //0x0213 by remote device
-		clear_characteristic(event->disconnect.conn.conn_handle);
+		ret = clear_connection(event->disconnect.conn.conn_handle);
 		adv_init();
-		break;
+		return ret;
 	case BLE_GAP_EVENT_CONN_UPDATE:
 		ESP_LOGI(TAG, "CONN_UPDATE status %d",event->conn_update.status);
-		if((ret = ble_gap_conn_find(event->conn_update.conn_handle, &desc))) return ret;
+		if((ret = ble_gap_conn_find(event->conn_update.conn_handle, &desc))) { return ret; } //log internal
 		print_conn_desc(&desc);
-		break;
+		return ret;
 	case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
 		ESP_LOGI(TAG, "PHY_UPDATE_COMPLETE" " %u; conn_handle %u rx_phy %u tx_phy %u",
 			event->phy_updated.status, event->phy_updated.conn_handle, event->phy_updated.rx_phy, event->phy_updated.tx_phy);
-	 break;
+		break;
 	case BLE_GAP_EVENT_DISC_COMPLETE:
 		ESP_LOGI(TAG, "DISC_COMPLETE reason %d",event->disc_complete.reason);
 		adv_init();
@@ -94,8 +103,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ret = gatt_svr_subscribe_cb(event);
 		if (ret == BLE_ATT_ERR_INSUFFICIENT_AUTHEN) {
 			return ble_gap_security_initiate(event->subscribe.conn_handle); } /* Request connection encryption */
-		else return ret;
-		break;
+		return ret;
 	case BLE_GAP_EVENT_MTU:
 		ESP_LOGI(TAG, "MTU update; conn_handle %u ch id %u mtu %u",
 			event->mtu.conn_handle, event->mtu.channel_id,event->mtu.value);
@@ -104,13 +112,13 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		/* Encryption has been enabled or disabled for this connection. */
 		if (likely(event->enc_change.status == 0)) {
 			ESP_LOGI(TAG, "connection encrypted!"); //ESP_LOGD(TAG,"enc_change.conn_handle = %u", event->enc_change.conn_handle);
-			set_encryption();
-			impl_io_on();
-		} else { ESP_LOGW(TAG, "connection encryption failed, status: %d",event->enc_change.status); }
-		break;
-	case BLE_GAP_EVENT_REPEAT_PAIRING:
+			ret = set_encryption(event->enc_change.conn_handle);
+			if(!ret) { impl_io_on(); break; } //if error goto REPEAT_PAIRING
+		} else { ESP_LOGW(TAG, "connection encryption failed, status: %d",event->enc_change.status); break; }
+		goto repeat; repeat: //break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+	case BLE_GAP_EVENT_REPEAT_PAIRING: 
 		/* Delete the old bond */
-		if((ret = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc))) return ret;
+		if((ret = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc))) { return ret; }
 		ble_store_util_delete_peer(&desc.peer_id_addr);
 		ESP_LOGW(TAG, "repairing..."); //Return BLE_GAP_REPEAT_PAIRING_RETRY to indicate that the host should continue with pairing operation
 		return BLE_GAP_REPEAT_PAIRING_RETRY;
@@ -120,48 +128,44 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 				.action = event->passkey.params.action,
 				.passkey = get_pincode()
 			};
-			ESP_LOGI(TAG, "enter passkey %lu on the peer side",pkey.passkey);
+			ESP_LOGI(TAG, "enter passkey %lu on the peer side", pkey.passkey);
 			if((ret = ble_sm_inject_io(event->passkey.conn_handle, &pkey))) return ret;
 		} else { ESP_LOGW(TAG, "passkey.params.action %u",event->passkey.params.action); }
 		break;
-	case BLE_GAP_EVENT_DISC: print_event_report(event->disc); //LEGACY
+	case BLE_GAP_EVENT_DISC: print_event_report(&event->disc); //LEGACY
 		break;
 	case BLE_GAP_EVENT_EXT_DISC:
 		if(event->ext_disc.data_status != BLE_GAP_EXT_ADV_DATA_STATUS_COMPLETE) {
 			ESP_LOGW(TAG,"data_status: %u",event->ext_disc.data_status); break; }
-		print_event_report(event->ext_disc);
+		print_event_report_ext(&event->ext_disc);
 		//RSSI = event->ext_disc.rssi;
 		parse_adv_cb(event->ext_disc.data, event->ext_disc.length_data);
 		break;
-	case BLE_GAP_EVENT_PERIODIC_SYNC: print_event_report(event->periodic_sync);
-		break;
-	case BLE_GAP_EVENT_PERIODIC_REPORT: print_event_report(event->periodic_report);
-		break;
-	case BLE_GAP_EVENT_PERIODIC_SYNC_LOST: print_event_report(event->periodic_sync_lost);
-		break;
+	//case BLE_GAP_EVENT_PERIODIC_SYNC: print_event_report(event->periodic_sync); break;
+	//case BLE_GAP_EVENT_PERIODIC_REPORT: print_event_report(event->periodic_report); break;
+	//case BLE_GAP_EVENT_PERIODIC_SYNC_LOST: print_event_report(event->periodic_sync_lost); break;
 	case BLE_GAP_EVENT_LINK_ESTAB: ESP_LOGI(TAG, "LINK_ESTAB"); break;
 	case BLE_GAP_EVENT_DATA_LEN_CHG: ESP_LOGI(TAG, "DATA_LEN_CHG"); break;
 	case BLE_GAP_EVENT_CONN_UPDATE_REQ: ESP_LOGI(TAG, "CONN_UPDATE_REQ"); break;
 	case BLE_GAP_EVENT_PARING_COMPLETE: ESP_LOGI(TAG, "PARING_COMPLETE");break;
 	case BLE_GAP_EVENT_IDENTITY_RESOLVED: ESP_LOGI(TAG, "IDENTITY_RESOLVED");break;
 	case BLE_GAP_EVENT_AUTHORIZE: ESP_LOGI(TAG, "AUTHORIZE"); break;
-	default: ESP_LOGI(TAG, "event->type %u",event->type);
+	default: ESP_LOGW(TAG, "event->type %u",event->type);
 	}
 	return ESP_OK;
 }
 
 /* Public functions */
 void adv_init(void) {
-	static const uint8_t device_name_len = strlen(ble_svc_gap_device_name());
-	const ble_uuid32_t uuid32 = { 32, generate_salt() };
-	__unused const ble_uuid16_t uuid16 = { 16,0x1805 };
+	const ble_uuid32_t uuid32 = BLE_UUID32_INIT(generate_salt());
+	__unused const ble_uuid16_t uuid16 = BLE_UUID16_INIT(0x1805);
 	__unused struct ble_hs_adv_fields rsp_fields = {
 		.adv_itvl = BLE_GAP_ADV_ITVL_MS(500),.adv_itvl_is_present = 1,
 		//.device_addr = addr_val;
 		.device_addr_type = own_addr_type, .device_addr_is_present = 1,
 		.uri = esp_uri, .uri_len = sizeof(esp_uri),
 	};
-	__unused ble_hs_adv_fields adv_fields = {
+	__unused struct ble_hs_adv_fields adv_fields = {
 		.flags = BLE_HS_ADV_F_DISC_GEN  | BLE_HS_ADV_F_BREDR_UNSUP , // Type 0x01
 		//.uuids16 =  &uuid16, .num_uuids16 = 1, .uuids16_is_complete = 1, //0x03
 		.uuids32 = &uuid32, .num_uuids32 = 1, .uuids32_is_complete = 1, //0x05
@@ -176,7 +180,7 @@ void adv_init(void) {
 		.le_role_is_present = 1, // Type 0x1C
 	}; __unused int8_t tx_pwr;
 #if NIMBLE_BLE_ADVERTISE && MYNEWT_VAL(BLE_EXT_ADV)
-	ble_gap_ext_adv_params ext_adv_cfg = {}; 
+	struct ble_gap_ext_adv_params ext_adv_cfg = {}; 
 	ext_adv_cfg.connectable = 1;
 	ext_adv_cfg.scan_req_notif = 1;
 	ext_adv_cfg.include_tx_power = 1;
@@ -188,10 +192,10 @@ void adv_init(void) {
 	ext_adv_cfg.tx_power = 21;
 	ESP_ERROR_CHECK(ble_gap_ext_adv_configure(0,&ext_adv_cfg, &tx_pwr,gap_event_handler, NULL));
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */
-	os_mbuf * const data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0); assert(data);
+	struct os_mbuf * const data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0); assert(data);
 	ESP_ERROR_CHECK(ble_hs_adv_set_fields_mbuf(&adv_fields, data));
 	ESP_ERROR_CHECK(ble_gap_ext_adv_set_data(0, data));
-	ESP_ERROR_CHECK(ble_gap_ext_adv_start(0,0, 0));//(TIMER_ADV / 10)
+	ESP_ERROR_CHECK(ble_gap_ext_adv_start(0, 0, 0));//(TIMER_ADV / 10) //CHANGED
 	ESP_LOGI(TAG, "advertising started! tx_pwr %d", tx_pwr);
 #else
 	__unused ble_gap_adv_params adv_cfg = {
@@ -210,12 +214,12 @@ void adv_init(void) {
 
 void ble_scan_init() {
 	__unused uint8_t own_addr_type = BLE_ADDR_PUBLIC;
-	__unused ble_gap_disc_params disc_params = { .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0, .passive = 1, .filter_duplicates = 1, .disable_observer_mode = 0};
-	__unused ble_gap_ext_disc_params ext_params = { .itvl = 0, .window = 0, .passive = SCAN_PASSIVE, .disable_observer_mode = 0 };
+	__unused struct ble_gap_disc_params disc_params = { .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0, .passive = 1, .filter_duplicates = 1, .disable_observer_mode = 0};
+	__unused struct ble_gap_ext_disc_params ext_params = { .itvl = 0, .window = 0, .passive = SCAN_PASSIVE, .disable_observer_mode = 0 };
 	/* Figure out address to use while advertising (no privacy for now) */
 	//ESP_RETURN_VOID_ON_ERROR(ble_hs_id_infer_auto(0, &own_addr_type), TAG, "determining address type");
 	//ESP_RETURN_VOID_ON_ERROR(ble_gap_disc(BLE_ADDR_PUBLIC,0,&disc_params, gap_event_handler, NULL), TAG, "ble_gap_ext_disc");
-	ESP_ERROR_CHECK(ble_gap_ext_disc(own_addr_type,0, 0, true, 0, 0,&ext_params,&ext_params, gap_event_handler, NULL));
+	ESP_ERROR_CHECK(ble_gap_ext_disc(own_addr_type, 0, 0, 1, 0, 0,&ext_params,&ext_params, gap_event_handler, NULL));
 }
 
 int gap_init(void) {
@@ -223,12 +227,13 @@ int gap_init(void) {
 	//char* name = const_cast<char*>(ble_svc_gap_device_name());
 	//memcpy(name + sizeof(MYNEWT_VAL(BLE_SVC_GAP_DEVICE_NAME))-1,,3*2);
 	set_ble_device_name();
+	device_name_len = strlen(ble_svc_gap_device_name());
 	//ble_svc_gap_device_name_set(DEVICE_NAME); /* Set TAG device name */
 	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
 	return ESP_OK;
 }
 
-static int ble_store_config_read_hook(int obj_type, const ble_store_key *key, ble_store_value *value) {
+static int ble_store_config_read_hook(int obj_type, const union ble_store_key *key, union ble_store_value *value) {
 	ESP_LOGI(TAG, "read obj_type %u", obj_type);
 	return ble_store_config_read(obj_type, key, value);
 	return BLE_HS_ENOENT;
@@ -240,14 +245,16 @@ static int ble_store_config_write_hook(int obj_type, const union ble_store_value
 	return 0;
 }
 
-void host_sync_cb() {
+static void host_sync_cb() {
 	int ret = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK);
 	CHECK_(ret);
 	ble_scan_init();/*set_random_addr(); adv_init();*/
 }
 
+static void ble_stack_reset(int reason) { ESP_LOGW("NimBLE", "nimble stack reset, reason: %d", reason);}; 
+
 void ble_hs_cfg_init() {
-	ble_hs_cfg.reset_cb = [](int reason) { ESP_LOGW("NimBLE", "nimble stack reset, reason: %d", reason);}; //on_stack_reset is called when host resets BLE stack due to errors
+	ble_hs_cfg.reset_cb = ble_stack_reset;//on_stack_reset is called when host resets BLE stack due to errors
 	ble_hs_cfg.sync_cb = host_sync_cb;
 	ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;
 	ble_hs_cfg.store_read_cb = ble_store_config_read_hook;
@@ -265,14 +272,19 @@ void ble_hs_cfg_init() {
 	ble_store_config_conf_init(); //ble_store_config_init();
 }
 
-int save_bonding(uint16_t conn_handle) { //No such entry
+static void proc_write_nvs(int obj_type, const struct ble_store_key_sec *key, union ble_store_value *val) {
+	if(ble_store_read(obj_type, (union ble_store_key*)key, val)) { ESP_LOGW(TAG,"No such entry %u", obj_type); }
+	else { ble_store_write(obj_type, val); }; //log internal 
+};
+
+int save_bonding(uint16_t h_conn) { //No such entry
 	//our sec 1; peer sec 2; cccd 3; peer addr(rpa_rec) 6; loc irk 7; csfc 8
 	//CCCD Client Characteristic Configuration Descriptor
 	//RPA rec - Resolvable Private Addresses record //IRK - Identity Resolving Key
 	//CSFC Client Supported Features Characteristic
 	struct ble_store_key_sec key; key.idx = 0;
 	union ble_store_value value;
-	int ret = ble_gap_conn_find(conn_handle, &desc);
+	int ret = ble_gap_conn_find(h_conn, &desc);
 	if(ret) return ret; //log internal
 	if (desc.peer_id_addr.type & BLE_ADDR_RANDOM) {
 		ESP_LOGW(TAG,"peer_id_addr.type %u" ,desc.peer_id_addr.type);
@@ -282,18 +294,14 @@ int save_bonding(uint16_t conn_handle) { //No such entry
 		ESP_LOGW(TAG,"sec_state.encrypted %u", desc.sec_state.encrypted);
 		return BLE_HS_EENCRYPT;
 	}
-	auto lambda = [](int obj_type, const ble_store_key_sec *key, ble_store_value *val) {
-		static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
-		if(ble_store_read(obj_type, (ble_store_key*)key, val)) { ESP_LOGW(TAG,"No such entry %u", obj_type); }
-		else { ble_store_write(obj_type, val); }; //log internal 
-	};
+	
 	ble_hs_cfg.store_write_cb = ble_store_config_write;
 		key.peer_addr = desc.our_id_addr;
-		lambda(BLE_STORE_OBJ_TYPE_OUR_SEC, &key, &value); //1
-
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key, &value); //1
+static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
 		key.peer_addr = desc.peer_id_addr;
-		lambda(BLE_STORE_OBJ_TYPE_PEER_SEC, &key, &value); //2
-		lambda(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key, &value); //6
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key, &value); //2
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key, &value); //6
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
 
 	ESP_LOGI(TAG, "%s %d", __FUNCTION__, ret);
@@ -316,12 +324,9 @@ __unused void set_random_addr(void) {
 #endif
 }
 
-bool is_connection_encrypted(uint16_t conn_handle) {
-	//struct ble_gap_conn_desc desc;
-	/* Print connection descriptor */
-	int ret = ble_gap_conn_find(conn_handle, &desc);
-	if(ret) { ESP_LOGW(TAG, "!find connection by handle: %u",conn_handle, ret); return false; }
-	return desc.sec_state.encrypted;
+int is_connection_encrypted(uint16_t h_conn) {
+	if(!ble_gap_conn_find(h_conn, &desc)) return desc.sec_state.encrypted; //log internal
+	return 0;
 }
 
 // void disconnect_all_connections(void) {
@@ -340,7 +345,7 @@ bool is_connection_encrypted(uint16_t conn_handle) {
 // }
 
 	//PRINT FUNCTIONS
-void print_conn_desc(ble_gap_conn_desc *desc) {
+void print_conn_desc(struct ble_gap_conn_desc *desc) {
 	ESP_LOGI(TAG, "connection handle: %u", desc->conn_handle);
 	ESP_LOGI(TAG, "local address: type (%u): %s", desc->our_id_addr.type, format_addr(desc->our_id_addr.val));
 	ESP_LOGI(TAG, "peer address: type (%u): %s", desc->peer_id_addr.type, format_addr(desc->peer_id_addr.val));
@@ -355,12 +360,12 @@ void parse_adv_data(const uint8_t* data, uint8_t data_len) {
 	//NIMLOG("Raw Data: "); for (uint8_t i = 0; i < data_len; i++) { NIMLOG("%02X ", data[i]); }
 	NIMLOG("Data length: \t%u\n", data_len);
 	for (size_t i = 0; i < data_len;) {
-		uint8_t len = data[i]; if(len > 2) { NIMLOG("Len: %u\t", len);}
-		uint8_t type = data[++i]; NIMLOG("Type: "); NIMLOG("%02X", type);
+		int len = data[i]; if(len > 2) { NIMLOG("Len: %u\t", len);}
+		int type = data[++i]; NIMLOG("Type: "); NIMLOG("%02X", type);
 		if(type == COMPLETE_NAME || type == SHORT_NAME ) {
 			NIMLOG(" Name: "); //for(size_t end = i + len;++i < end; i++) { NIMLOG("%c",data[i]); }
 			char* name = (char*)(data+i); i += len;
-			name[i-1] = '\0';
+			name[i-1] = '\0'; //-type
 			NIMLOG(name);
 		}
 		else { NIMLOG(" { "); for(size_t end = i + len;++i < end;) { NIMLOG("%02X ", data[i]); } NIMLOG("}"); }
@@ -370,7 +375,7 @@ void parse_adv_data(const uint8_t* data, uint8_t data_len) {
 }
 
 void print_rx_data(const struct os_mbuf *buf) { //notify_rx.om->om_len = %u
-	__unused auto len = buf->om_len; __unused auto &om_data = buf->om_data;
+	__unused size_t len = buf->om_len; __unused uint8_t * om_data = buf->om_data;
 	if(!len) { return; }
 	NIMLOG("Data len = %u, Data: ", buf->om_len);
 	NIMLOG(" { "); for(size_t i = 0; i < len; i++) {
@@ -380,27 +385,27 @@ void print_rx_data(const struct os_mbuf *buf) { //notify_rx.om->om_len = %u
 
 void print_props_mask(uint8_t props) {
 	__unused static const char* type[] = { "CONN", "SCAN" , "DIR", "RSP" , "LEGA" };
-	for (uint8_t mask = 16; mask; mask>>=1) { NIMLOG("%c",props & mask ? '1': '0'); } NIMLOG("\t");
+	for (uint8_t m = 16; m; m>>=1) { NIMLOG("%c",props & m ? '1': '0'); } NIMLOG("\t");
 	for (size_t i = 0;i < 5; i++) { if(props & (1 << i)) { NIMLOG(type[i]); NIMLOG(", "); }  };
 }
 
-void print_event_report(const ble_gap_ext_disc_desc & disc) {
-	NIMLOG("\n%s (%u)",format_addr(disc.addr.val), disc.addr.type);
-	NIMLOG("\nAD Event Mask: "); print_props_mask(disc.props);NIMLOG("\nRSSI:\t\t%d\n", disc.rssi);
-	if (disc.props & BLE_HCI_ADV_LEGACY_MASK) { NIMLOG("Legacy event: \t%u\n", disc.legacy_event_type); } //BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND; //3
-	else { if(disc.tx_power != 127) { NIMLOG("Tx Power: \t%d\n", disc.tx_power); }
-		NIMLOG("Prim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\n", disc.prim_phy, disc.sec_phy, disc.sid); }
-	if(disc.props & BLE_HCI_ADV_DIRECT_MASK) { NIMLOG("Direct address: \t%s", format_addr(disc.direct_addr.val));}
-	if (disc.length_data) { parse_adv_data(disc.data, disc.length_data); } NIMLOG("\n");
+void print_event_report_ext(const struct ble_gap_ext_disc_desc* disc) {
+	NIMLOG("\n%s (%u)",format_addr(disc->addr.val), disc->addr.type);
+	NIMLOG("\nAD Event Mask: "); print_props_mask(disc->props);NIMLOG("\nRSSI:\t\t%d\n", disc->rssi);
+	if (disc->props & BLE_HCI_ADV_LEGACY_MASK) { NIMLOG("Legacy event: \t%u\n", disc->legacy_event_type); } //BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND; //3
+	else { if(disc->tx_power != 127) { NIMLOG("Tx Power: \t%d\n", disc->tx_power); }
+		NIMLOG("Prim PHY: \t%u\nSecn PHY: \t%u\nSID:\t\t%d\n", disc->prim_phy, disc->sec_phy, disc->sid); }
+	if(disc->props & BLE_HCI_ADV_DIRECT_MASK) { NIMLOG("Direct address: \t%s", format_addr(disc->direct_addr.val));}
+	if (disc->length_data) { parse_adv_data(disc->data, disc->length_data); } NIMLOG("\n");
 }
 
-void print_event_report(const ble_gap_disc_desc & disc) {
+void print_event_report(const struct ble_gap_disc_desc* disc) {
 	 //BLE_HCI_ADV_RPT_EVTYPE_ADV_IND;//0
-	NIMLOG("\n%s (%u)\nAD Event Type:\t%u\nRSSI:\t\t%d\n", format_addr(disc.addr.val), disc.addr.type, disc.event_type, disc.rssi);
-	if(disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND) { NIMLOG("Direct address: \t%s", format_addr(disc.direct_addr.val));}
-	if (disc.length_data) { parse_adv_data(disc.data, disc.length_data); } NIMLOG("\n");
+	NIMLOG("\n%s (%u)\nAD Event Type:\t%u\nRSSI:\t\t%d\n", format_addr(disc->addr.val), disc->addr.type, disc->event_type, disc->rssi);
+	if(disc->event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND) { NIMLOG("Direct address: \t%s", format_addr(disc->direct_addr.val));}
+	if (disc->length_data) { parse_adv_data(disc->data, disc->length_data); } NIMLOG("\n");
 }
-
+/*
 void print_event_report(const decltype(ble_gap_event::periodic_report) & rep) {
 	ESP_LOGI(TAG, "Periodic adv report event: \n");
 	NIMLOG("sync_handle : %u\n", rep.sync_handle);
@@ -428,4 +433,4 @@ void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep)
 		rep.reason == BLE_HS_ETIMEOUT ? "timeout" : (rep.reason == BLE_HS_EDONE ? "terminated locally" : "Unknown reason"));
 	synced = false;
 #endif
-}
+}*/
