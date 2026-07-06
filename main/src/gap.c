@@ -188,7 +188,7 @@ void adv_init(void) {
 	struct os_mbuf * const data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0); assert(data);
 	ESP_ERROR_CHECK(ble_hs_adv_set_fields_mbuf(&adv_fields, data));
 	ESP_ERROR_CHECK(ble_gap_ext_adv_set_data(0, data));
-	ESP_ERROR_CHECK(ble_gap_ext_adv_start(0, 0, 0));//(TIMER_ADV / 10) //CHANGED
+	ESP_ERROR_CHECK(ble_gap_ext_adv_start(0, (TIMER_ADV / 10), 0));
 	ESP_LOGI(TAG, "advertising started! tx_pwr %d", tx_pwr);
 #else
 	__unused ble_gap_adv_params adv_cfg = {
@@ -252,6 +252,7 @@ void ble_hs_cfg_init() {
 	ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;
 	ble_hs_cfg.store_read_cb = ble_store_config_read_hook;
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
+	//ble_hs_cfg.store_write_cb = ble_store_config_write;
 	ble_hs_cfg.store_delete_cb = ble_store_config_delete;
 	ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 	ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
@@ -270,11 +271,12 @@ static void proc_write_nvs(int obj_type, const struct ble_store_key_sec *key, un
 	else { ble_store_write(obj_type, val); }; //log internal 
 };
 
-int save_bonding(uint16_t h_conn) { //No such entry
+int save_bonding(uint16_t h_conn) {
 	//our sec 1; peer sec 2; cccd 3; peer addr(rpa_rec) 6; loc irk 7; csfc 8
 	//CCCD Client Characteristic Configuration Descriptor
 	//RPA rec - Resolvable Private Addresses record //IRK - Identity Resolving Key
 	//CSFC Client Supported Features Characteristic
+	static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
 	struct ble_store_key_sec key; key.idx = 0;
 	union ble_store_value value;
 	int ret = ble_gap_conn_find(h_conn, &desc);
@@ -291,7 +293,6 @@ int save_bonding(uint16_t h_conn) { //No such entry
 	ble_hs_cfg.store_write_cb = ble_store_config_write;
 		key.peer_addr = desc.our_id_addr;
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key, &value); //1
-static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
 		key.peer_addr = desc.peer_id_addr;
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key, &value); //2
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key, &value); //6
