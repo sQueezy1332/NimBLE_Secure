@@ -3,7 +3,9 @@
 #include "gatt.h"
 #include "host/ble_gatt.h"
 #include "services/gatt/ble_svc_gatt.h"
-
+#define AUTO_IO_CHR 1
+//#define SPP_CHR 2
+//#define HEART_RATE_CHR 3
 static const char* TAG = "GATT";
 /* HEART_RATE Service */
 __unused static const ble_uuid16_t SVC_HEART = BLE_UUID16_INIT(0x180D);
@@ -27,26 +29,17 @@ static uint16_t h_io_chr;
 static uint16_t h_spp_chr;
 __unused static uint16_t h_heart_chr;
 
-typedef union { 
-	uint8_t encrypted: 1, io: 1, spp: 1, heart: 1; uint8_t val;
-} sub_attr_t; static_assert(sizeof(sub_attr_t) == 1);
+typedef uint8_t subs_t;
+static subs_t subs_io, subs_spp, __unused subs_heart;
+static subs_t conn_encrypted;
 
-static sub_attr_t subs_conn[CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
+static_assert(CONFIG_BT_NIMBLE_MAX_CONNECTIONS <= sizeof(subs_t) * 8 -1);
+static const size_t max_conns = CONFIG_BT_NIMBLE_MAX_CONNECTIONS;
+
 
 /* TAG services table */
 const struct ble_gatt_svc_def gatt_svr_svcs [] = {
-	{	// Heart rate service
-		.type = BLE_GATT_SVC_TYPE_PRIMARY,
-		.uuid = &SVC_HEART.u,
-		.characteristics = (struct ble_gatt_chr_def []) {
-		{	// Heart Rate characteristic 
-			.uuid = &CHR_HEART.u,
-			.access_cb = heart_rate_chr_access,
-			.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_INDICATE | BLE_GATT_CHR_F_NOTIFY ,//| BLE_GATT_CHR_F_READ_ENC,
-			.val_handle = &h_heart_chr
-		}, {  }
-		}
-	},	
+#ifdef AUTO_IO_CHR
 	{	// Automation IO service
 		.type = BLE_GATT_SVC_TYPE_PRIMARY,
 		.uuid = &SVC_AUTO_IO.u,
@@ -59,6 +52,8 @@ const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 		}, {  }
 		},
 	},
+#endif
+#ifdef SPP_CHR
 	{	// Serial Profile Service
 		.type = BLE_GATT_SVC_TYPE_PRIMARY,
 		.uuid = &SVC_SPP.u,
@@ -71,6 +66,21 @@ const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 		}, {  }
 		},
 	},
+#endif
+#ifdef HEART_RATE_CHR
+	{	// Heart rate service
+		.type = BLE_GATT_SVC_TYPE_PRIMARY,
+		.uuid = &SVC_HEART.u,
+		.characteristics = (struct ble_gatt_chr_def []) {
+		{	// Heart Rate characteristic 
+			.uuid = &CHR_HEART.u,
+			.access_cb = heart_rate_chr_access,
+			.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_INDICATE | BLE_GATT_CHR_F_NOTIFY ,//| BLE_GATT_CHR_F_READ_ENC,
+			.val_handle = &h_heart_chr
+		}, {  }
+		}
+	},
+#endif
 	{ /* No more services. */},
 };
 
@@ -129,7 +139,7 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "write", conn_handle, attr_handle);
 		}
 			uint16_t out_len; //ESP_LOGI(TAG, "om_len %u", ctxt->om->om_len); 
-			CHECK_RET(ble_hs_mbuf_to_flat(ctxt->om, spp_buf, sizeof(spp_buf), &out_len));
+			CHECK_RET(ble_hs_mbuf_to_flat(ctxt->om, spp_buf, sizeof(spp_buf)-1, &out_len));
 			spp_buf[out_len] = '\0'; ESP_LOGI(TAG, "%s", spp_buf);
 		}
 		return 0;
@@ -152,75 +162,78 @@ void gatt_svr_init(void) {
 	gatt_cts_service_init(); //ble_svc_cts_time_updated();
 }
 
-int need_notify_io() { return subs_conn[0].io; }
+int need_notify_io() { return subs_io; }
 
 int clear_connection(uint16_t h_conn) {
-	if (h_conn >= sizeof(subs_conn)) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	subs_conn[h_conn].val = 0; return 0;
+	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+#ifdef AUTO_IO_CHR
+	bitClear(subs_io, h_conn);
+#endif
+#ifdef SPP_CHR
+	bitClear(subs_spp, h_conn);
+#endif
+#ifdef HEART_RATE_CHR
+	bitClear(subs_heart, h_conn);
+#endif
+	return 0;
 }
 
 int set_encryption(uint16_t h_conn) {
-	if (h_conn >= sizeof(subs_conn)) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	subs_conn[h_conn].encrypted = 1; return 0;
+	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+	bitSet(conn_encrypted, h_conn); return 0;
 }
 
-int get_encryption(uint16_t h_conn) {
-	if (h_conn >= sizeof(subs_conn)) { ESP_LOGW(TAG, "!get_encryption"); return 0; }
-	return subs_conn[h_conn].encrypted;
+int is_encrypted(uint16_t h_conn) {
+	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+	return bitRead(conn_encrypted, h_conn); 
 }
 
 void send_alarm_notify() {
-	for (size_t i = 1; i < sizeof(subs_conn); i++) {
-		if (subs_conn[i].io) {
+	//if (!subs_io) return;
+	for (size_t i = 1; i < max_conns; i++) {
+		if (subs_io & BIT(i)) {
 			CHECK_VOID(ble_gatts_notify(i, h_io_chr)); //ESP_LOGI(TAG, "send_alarm_notify %u", i);
 		}
 	}
 }
 
-void send_heart_rate_notify() {
-	for (size_t i = 1; i < sizeof(subs_conn); i++) {
-		if (subs_conn[i].heart) {
-			CHECK_VOID(ble_gatts_notify(i, h_heart_chr)); //ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
-		}
-	}
-}
-
 void send_spp_notify() {
-	for (size_t i = 1; i < sizeof(subs_conn); i++) {
-		if (subs_conn[i].spp) {
+	if(!subs_spp) return;
+	for (size_t i = 1; i < max_conns; i++) {
+		if (subs_spp & BIT(i)) {
 			CHECK_VOID(ble_gatts_notify(i, h_spp_chr)); //ESP_LOGI(TAG, "send_spp_notify %u", i);
 		}
 	}
 }
 
-static int set_sub_chr(size_t h_conn, int num, bool val) {
-	if (unlikely(h_conn >= sizeof(subs_conn))) return BLE_ATT_ERR_INVALID_HANDLE;
-	switch (num) {
-			case 1: subs_conn[h_conn].io = val; ESP_LOGI(TAG, "chr io -> %u", val); 
-				return 0;
-			case 2: subs_conn[h_conn].spp = val; ESP_LOGI(TAG, "chr spp -> %u", val); 
-				return 0;
-			case 3: subs_conn[h_conn].heart = val; ESP_LOGI(TAG, "chr heart -> %u", val); 
-				return 0;
-		default: ESP_LOGW(TAG, "set_sub_chr %d", num); 
+void send_heart_rate_notify() {
+	if(!subs_heart) return;
+	for (size_t i = 1; i < max_conns; i++) {
+		if (subs_heart & BIT(i)) {
+			CHECK_VOID(ble_gatts_notify(i, h_heart_chr)); //ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
+		}
 	}
-	return BLE_ATT_ERR_UNLIKELY;
 }
 
 int gatt_svr_subscribe_cb(const struct ble_gap_event *event) {
 	const size_t attr_handle = event->subscribe.attr_handle;
-	int chr_num;
-	if(attr_handle == h_io_chr) chr_num = 1;
-	else if(attr_handle == h_spp_chr) chr_num = 2;
-	else if (attr_handle == h_heart_chr) chr_num = 3;
-	else return BLE_ATT_ERR_ATTR_NOT_FOUND;
-	size_t h_conn = event->subscribe.conn_handle;
-	//if (!is_connection_encrypted(h_conn)) {
-	if (!get_encryption(h_conn)) {
+	const size_t h_conn = event->subscribe.conn_handle;
+	if (unlikely(h_conn > max_conns)) return BLE_ATT_ERR_INVALID_HANDLE;
+	if (!is_encrypted(h_conn)) {
 		ESP_LOGW(TAG, "connection not encrypted!");
 		return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
 	}
-	return set_sub_chr(h_conn, chr_num, event->subscribe.cur_notify || event->subscribe.cur_indicate); return 0;
+	bool notify = event->subscribe.cur_notify | event->subscribe.cur_indicate;
+#ifdef AUTO_IO_CHR
+	if(attr_handle == h_io_chr) { bitWrite(subs_io, h_conn -1, notify); }
+#endif
+#ifdef SPP_CHR
+	else if(attr_handle == h_spp_chr)  { bitWrite(subs_spp, h_conn -1, notify); }
+#endif
+#ifdef HEART_RATE_CHR
+	else if (attr_handle == h_heart_chr)  { bitWrite(subs_heart, h_conn -1, notify); }
+#endif
+	return BLE_ATT_ERR_ATTR_NOT_FOUND;
 }
 
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {
