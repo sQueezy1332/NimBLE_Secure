@@ -1,4 +1,3 @@
-#define _WANT_USE_LONG_TIME_T
 ///#include "esp_main.h"
 //#include <string.h>
 //#include <freertos/FreeRTOS.h>
@@ -26,13 +25,12 @@ extern uint8_t pass_key_len, scan_key_len;
 extern int wifi_is_connected();
 extern size_t strtoB(const char* src, uint8_t *dest, size_t buf_len);
 extern int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size);
-//extern void set_main_part();
 extern esp_err_t wifi_timer_reset(uint32_t);
 extern void revoke_ota_rollback();
+extern void set_main_partition();
 extern esp_err_t save_auth_data();
 extern void nvsEraseAll(const char* = nullptr);
 extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
-//extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 extern int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 extern std::unique_ptr<char[]> task_list(size_t* len);
 
@@ -120,7 +118,7 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 		pass = temp + strlen_const(_PASS);
 		*temp = '\0';
 	}
-	std::unique_ptr <char[]> str_pass, str_scan; //931541
+	std::unique_ptr <char[]> str_pass, str_scan;
 	int len_pass, len_key;
 	if (ssid) {
 		len_pass = base32_decode(ssid, pass_key, sizeof(pass_key)); 
@@ -137,7 +135,7 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 		len_key = strtoB(pass, scan_key, sizeof(scan_key));
 		//scan_key_len = len_key;
 		if (len_key >= 8) {
-			reinterpret_cast<char*&>(str_scan) = new char[len_key * 3 + 1]; //931571 //
+			reinterpret_cast<char*&>(str_scan) = new char[len_key * 3 + 1];
 			if(str_scan) {
 				len = 0;
 				for (size_t i = 0; i < len_key; i++) { len += sprintf(&str_scan.get()[i * 3], "%02X ", scan_key[i]); }
@@ -151,7 +149,7 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 	i += sprintf(log+i,"SCAN_KEY [%s]\n" , str_pass.get());
 	i += sprintf(log+i,"pass_key_len(base32) = %d\n", len_pass);
 	i += sprintf(log+i,"scan_key_len = %d\n", len_key);
-	bool save_p = len_pass >= 8, save_s = len_key >= 8;
+	bool save_p = len_pass >= 16, save_s = len_key >= 8;
 	if(save_p || save_s) {
 		if(save_p){ memcpy(::pass_key, pass_key, pass_key_len = len_pass); }
 		if(save_s){ memcpy(::scan_key, scan_key, scan_key_len = len_key); }
@@ -169,11 +167,11 @@ esp_err_t http_server_init(void) {
 		.uri = "/update",
 		.method = HTTP_GET,
 		.handler = [](httpd_req_t *req) { 
-			extern const char index_html_start[] asm("_binary_index_html_gz_start");
-			extern const char index_html_end[] asm("_binary_index_html_gz_end");
-			size_t size = index_html_end - index_html_start;  ESP_LOGD(TAG, "html size %lu", size);
+			extern const char ota_html_start[] asm("_binary_ota_html_gz_start");
+			extern const char ota_html_end[] asm("_binary_ota_html_gz_end");
+			size_t size = ota_html_end - ota_html_start;  ESP_LOGD(TAG, "html size %lu", size);
 			httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-			return httpd_resp_send(req, index_html_start, size);
+			return httpd_resp_send(req, ota_html_start, size);
 		},
 		.user_ctx = NULL
 	};
@@ -209,9 +207,10 @@ esp_err_t http_server_init(void) {
 	};
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
 
-	uri.uri = "/ota_part";
+	uri.uri = "/main";
 	uri.method = HTTP_GET;
 	uri.handler = [](httpd_req_t *req) {
+		set_main_partition();
 		return 0;
 	};
 	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
