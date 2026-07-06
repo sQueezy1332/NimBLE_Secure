@@ -30,6 +30,11 @@
 #define SCAN_PASSIVE 1
 #endif
 
+#define bitRead(value, bit) (((value) >> (bit)) & 0x01)
+#define bitSet(value, bit) ((value) |= (1UL << (bit)))
+#define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
+#define bitWrite(value, bit, bitvalue) (bitvalue ? bitSet(value, bit) : bitClear(value, bit))
+
 #define FUNC_ADDRESS (esp_cpu_get_call_addr((intptr_t)__builtin_return_address(0)))
 #define CHECK_(x) ESP_ERROR_CHECK_WITHOUT_ABORT(x)
 #define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","err 0x%02x at 0x%08x", x, FUNC_ADDRESS)
