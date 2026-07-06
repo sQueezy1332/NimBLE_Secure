@@ -62,6 +62,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ESP_LOGI(TAG, "CONN_UPDATE status %d",event->conn_update.status);
 		if((ret = ble_gap_conn_find(event->conn_update.conn_handle, &desc))) { return ret; } //log internal
 		print_conn_desc(&desc);
+		//if(event->conn_update.status == 0)  { adv_init(); }
 		return ret;
 	case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
 		ESP_LOGI(TAG, "PHY_UPDATE_COMPLETE" " %u; conn_handle %u rx_phy %u tx_phy %u",
@@ -266,10 +267,10 @@ void ble_hs_cfg_init() {
 	ble_store_config_conf_init(); //ble_store_config_init();
 }
 
-static void proc_write_nvs(int obj_type, const struct ble_store_key_sec *key) {
+static void proc_write_nvs(int obj_type, const union ble_store_key *key) {
 	union ble_store_value val;
 	if(ble_store_read(obj_type, (union ble_store_key*)key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); }
-	else { int rc; if(rc = ble_store_write(obj_type, &val)) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
+	else { int rc; if((rc = ble_store_write(obj_type, &val))) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
 }
 
 int save_bonding(uint16_t h_conn) {
@@ -278,9 +279,9 @@ int save_bonding(uint16_t h_conn) {
 	//RPA rec - Resolvable Private Addresses record //IRK - Identity Resolving Key
 	//CSFC Client Supported Features Characteristic
 	static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
-	struct ble_store_key_sec key; key.idx = 0;
-	int ret = ble_gap_conn_find(h_conn, &desc);
-	if(ret) return ret; //log internal
+	union ble_store_key key; key.sec.idx = 0;
+	int rc = ble_gap_conn_find(h_conn, &desc);
+	if(rc) return rc; //log internal
 	if (desc.peer_id_addr.type & BLE_ADDR_RANDOM) {
 		ESP_LOGW(TAG,"peer_id_addr.type %u" ,desc.peer_id_addr.type);
 		return BLE_HS_ENOADDR;
@@ -289,17 +290,16 @@ int save_bonding(uint16_t h_conn) {
 		ESP_LOGW(TAG,"sec_state.encrypted %u", desc.sec_state.encrypted);
 		return BLE_HS_EENCRYPT;
 	}
-	
+	print_conn_desc(&desc);
 	ble_hs_cfg.store_write_cb = ble_store_config_write;
-		key.peer_addr = desc.our_id_addr;
+		key.sec.peer_addr = desc.our_id_addr;
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key); //1
-		key.peer_addr = desc.peer_id_addr;
+		key.sec.peer_addr = desc.peer_id_addr;
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key); //2
 		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key); //6
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
-
-	ESP_LOGI(TAG, "%s %d", __FUNCTION__, ret);
-	return ret;
+	//ESP_LOGI(TAG, "save_bonding rc %d", rc);
+	return rc;
 }
 
 __unused void set_random_addr(void) {
