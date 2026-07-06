@@ -266,10 +266,11 @@ void ble_hs_cfg_init() {
 	ble_store_config_conf_init(); //ble_store_config_init();
 }
 
-static void proc_write_nvs(int obj_type, const struct ble_store_key_sec *key, union ble_store_value *val) {
-	if(ble_store_read(obj_type, (union ble_store_key*)key, val)) { ESP_LOGW(TAG,"No such entry %u", obj_type); }
-	else { ble_store_write(obj_type, val); }; //log internal 
-};
+static void proc_write_nvs(int obj_type, const struct ble_store_key_sec *key) {
+	union ble_store_value val;
+	if(ble_store_read(obj_type, (union ble_store_key*)key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); }
+	else { int rc; if(rc = ble_store_write(obj_type, &val)) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
+}
 
 int save_bonding(uint16_t h_conn) {
 	//our sec 1; peer sec 2; cccd 3; peer addr(rpa_rec) 6; loc irk 7; csfc 8
@@ -278,7 +279,6 @@ int save_bonding(uint16_t h_conn) {
 	//CSFC Client Supported Features Characteristic
 	static_assert(CONFIG_BT_NIMBLE_MAX_CCCDS == 0);
 	struct ble_store_key_sec key; key.idx = 0;
-	union ble_store_value value;
 	int ret = ble_gap_conn_find(h_conn, &desc);
 	if(ret) return ret; //log internal
 	if (desc.peer_id_addr.type & BLE_ADDR_RANDOM) {
@@ -292,10 +292,10 @@ int save_bonding(uint16_t h_conn) {
 	
 	ble_hs_cfg.store_write_cb = ble_store_config_write;
 		key.peer_addr = desc.our_id_addr;
-		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key, &value); //1
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key); //1
 		key.peer_addr = desc.peer_id_addr;
-		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key, &value); //2
-		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key, &value); //6
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key); //2
+		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key); //6
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
 
 	ESP_LOGI(TAG, "%s %d", __FUNCTION__, ret);
