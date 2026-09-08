@@ -2,18 +2,6 @@
 #include "main.h"
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 
-typedef struct {
-	volatile size_t ff0;
-	volatile ble_addr_t ex;
-	volatile size_t ff1;
-} zalupa_t;
-
-typedef union {
-	zalupa_t st;
-	uint64_t pad0;
-	uint64_t pad1;
-} zalupa_u;
-
 extern "C" void app_main() {
 	nvs_init(); //read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
