@@ -29,22 +29,69 @@ int ble_svc_gap_device_name_set(const char *);
 void ble_store_config_conf_init(); //CONFIG_BT_NIMBLE_NVS_PERSIST=y
 struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 
 struct ble_gap_event; struct os_mbuf; struct ble_gatt_register_ctxt;
-union ble_store_key; union ble_store_value; 
+union ble_store_key; union ble_store_value;
 
-void ble_hs_cfg_init();
 int gap_init();
+void ble_hs_cfg_init();
 void ble_scan_init();
 void adv_init();
 int save_bonding(uint16_t h_conn);
 int is_connection_encrypted(uint16_t h_conn);
 
 extern uint32_t get_pincode();
-extern void parse_adv_cb(const uint8_t*, uint8_t);
+extern void parse_adv_cb(const struct ble_gap_ext_disc_desc*);
 extern uint32_t generate_salt();
 extern void print_task_list();
 extern void set_ble_device_name();
-extern void unpatch_cb();
+extern void adv_complete_cb();
+extern void disc_complete_cb();
+extern void conn_encrypted_cb();
 extern void parse_rx_data(const struct ble_gap_event*);
+
+#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
+#if !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)
+extern struct ble_store_value_sec
+    ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern int ble_store_config_num_our_secs;
+
+extern uint16_t ble_store_config_our_bond_count;
+extern uint16_t ble_store_config_peer_bond_count;
+
+extern struct ble_store_value_sec
+    ble_store_config_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+
+extern int ble_store_config_num_peer_secs;
+
+#if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
+extern struct ble_store_value_cccd
+    ble_store_config_cccds[MYNEWT_VAL(BLE_STORE_MAX_CCCDS)];
+extern int ble_store_config_num_cccds;
+#endif
+
+#if MYNEWT_VAL(BLE_STORE_MAX_CSFCS)
+extern struct ble_store_value_csfc
+     ble_store_config_csfcs[MYNEWT_VAL(BLE_STORE_MAX_CSFCS)];
+extern int ble_store_config_num_csfcs;
+#endif
+
+extern struct ble_store_value_rpa_rec
+    ble_store_config_rpa_recs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern int ble_store_config_num_rpa_recs;
+
+extern struct ble_store_value_local_irk
+    ble_store_config_local_irks[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern int ble_store_config_num_local_irks;
+
+#endif /* !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) */
+
+typedef struct {
+	struct ble_store_value_sec our_secs;
+	struct ble_store_value_sec peer_secs;
+	//struct ble_store_value_rpa_rec ble_store_config_rpa_recs;
+} my_ble_store_t; //MYNEWT_VAL_BLE_MAX_CONNECTIONS
+
+#endif /* !MYNEWT_VAL(BLE_STORE_MAX_BONDS) */
+
 #ifdef __cplusplus
 }
 #endif
