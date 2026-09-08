@@ -6,6 +6,7 @@
 #define _WANT_USE_LONG_TIME_T
 #include "esp_main.h"
 #include "driver/gpio.h"
+#include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
 //#include "esp_random.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
@@ -18,21 +19,23 @@
 //#include "host/util/util.h"
 #include "gap.h"
 #include "gatt.h"
-#define HEART_RATE_PERIOD (2000 * 1000ul)
+#define HEART_RATE_PERIOD (2000 * 1000)
 //#include "led.h"
 //#include "common.h"
 #include "esp_mac.h"
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
-				//#define CONFIG_GENERIC_PATCHER
+				#define CONFIG_ADC_LINE
 //#ifdef CONFIG_FACTORY_FIRMWARE
 #include "wifi_api.h"
 //#endif
 #include <memory>
-#define CDC_BUF_SIZE (128)
+
 //#define NO_PARSE_KEY
 
 static const char* TAG = "MAIN";
+static const char* NVS = "NVS";
+#define TMR "TMR"
 
 #define dWrite(x,y) digitalWrite(x, y)
 #define dRead(x) digitalRead(x)
@@ -41,7 +44,7 @@ static const char* TAG = "MAIN";
 #define PIN_RELAY_GND 3 //unused in code
 #define PIN_LED 8
 
-#ifdef CONFIG_GENERIC_PATCHER
+#ifdef CONFIG_ADC_LINE
 #define PIN_LINE 1
 //#define PIN_RELAY_2 2
 #define PIN_LED_MASK BIT(PIN_LED)
@@ -54,7 +57,7 @@ static const char* TAG = "MAIN";
 #else		//forteza
 #define PIN_LINE (PIN_LED)
 #define PIN_LED_MASK (0)
-#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT_OD) //optic relay always pullup
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT_OD)
 #define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_0)
 #define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 1)
 #define RELAY_PATCH_IMPL()
@@ -73,6 +76,11 @@ static const char* TAG = "MAIN";
 	#define RELAY_2_UNPATCH_IMPL()
 #endif
 
+#define UART_BUF_SIZE (256)
+#define CDC_BUF_SIZE (128)
+#define UART_PORT UART_NUM_1
+#define PATTERN_CHR_NUM    (1)   /*!< Set the number of consecutive and identical characters received by receiver which defines a UART pattern*/
+
 using String = std::string;
 typedef struct { byte patch , upd , flag;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
@@ -80,7 +88,7 @@ typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, 
 //NIMBLE_HS_STACK_SIZE
 //StackType_t xMainStack[4*1024]; StaticTask_t xMainTaskBuffer;
 StackType_t	xHostStack[1024*8]; StaticTask_t xHostTaskBuffer;
-TaskHandle_t h_main_task, h_nimble_task, h_uart_event_task;
+TaskHandle_t h_main_task, h_nimble_task;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
 esp_timer_handle_t h_timer_patch;
 esp_timer_handle_t h_timer_wifi;
@@ -102,26 +110,26 @@ __unused static void mainTask(void * = NULL);
 __unused static void usb_cdc_task(void *arg);
 //__unused static void nimble_host_task(void *);
 extern esp_err_t http_server_init();
-
 //extern void set_cts_unix(time_t now);
 static void patch_func(uint64_t = TIMER_PATCH);
 
 __unused static void IRAM_ATTR isr_handler();
 void set_ble_device_name();
+int ble_delete_all_bonds();
+void set_wifi_hostname();
 //static uint32_t generate_pin(uint32_t, const char * = (char *)pass_key, byte = pass_key_len);
-size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
-template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);
-int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
+size_t strtoB(const char* str, byte* buf, size_t buf_len);
+template <bool = false, char = 0> int bytes_to_str(const byte* src, char* dest, size_t data_size);
+int bytes_to_str_bigend(const byte* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
 //void generate_salt();
-void ble_delete_all_peers();
+
 bool wifi_sta_wait_conn(); 
 void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
 void wifi_timer_start() { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
 esp_err_t wifi_timer_reset(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
 
-//esp_err_t save_bonded_mac(const ble_addr_t &);
 void nvs_read_sets();
-void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETS, NVS_READWRITE));
+void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
 esp_err_t save_auth_data();
 void read_auth_data();
 
@@ -151,7 +159,11 @@ void patch_func(uint64_t period) {
 	CHECK_(esp_timer_start(h_timer_patch, period));
 }
 
-void unpatch_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } }
+void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
+
+void disc_complete_cb() { ble_scan_init(); }
+
+void conn_encrypted_cb() { impl_io_on(); }
 
 void timer_patch_off_cb(void *) { 
     RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
@@ -233,7 +245,7 @@ inline void nvs_test(const char* key = nullptr) {
 		nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.available_entries, nvs_stats.total_entries, nvs_stats.namespace_count);
 	for (ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it); ret == ESP_OK; ret = nvs_entry_next(&it)) {
 		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
-		nvsApi nvs; ESP_LOGI(TAG, "space '%s'\tkey '%s'  type '%u'", entry.namespace_name, entry.key, entry.type); //blob 66
+		nvsApi nvs; ESP_LOGI(TAG, "space '%s'\tkey '%s' type '%u'", entry.namespace_name, entry.key, entry.type);
 		if(key && !strcmp(key,entry.key)) continue;
 		if(!nvs.begin(entry.namespace_name, NVS_READONLY)) {
 			switch (esp_err_t ret = nvsGet(nvs, entry.key, entry.type, buf, &buf_len)) {
@@ -241,12 +253,12 @@ inline void nvs_test(const char* key = nullptr) {
 				DEBUGF("Data = %lu\n", *(uint32_t*)buf); 
 				break;
 			case 1:
-			#ifdef CONFIG_LIBC_NEWLIB_NANO_FORMAT
+				#ifdef CONFIG_LIBC_NEWLIB_NANO_FORMAT
 				DEBUGF("Data = "); if(((uint32_t*)buf)[1]) { DEBUGF("%02lX", ((uint32_t*)buf)[1]); }
 				DEBUGF("%08lX", ((uint32_t*)buf)[0]); DEBUGLN();
-			#else
+				#else
 				DEBUGF("Data = %llu\n", *(uint64_t*)buf);
-			#endif
+				#endif
 				break;
 			case 2: 
 				ESP_LOGI(TAG, "Str: %s\n", (char*)buf); break;
@@ -278,6 +290,22 @@ void nvsEraseAll(const char *except) {
 		ret = nvs_entry_next(&it);
 	}
 	nvs_release_iterator(it);
+}
+
+void uart_cb() {
+	static char buf[64];
+	int len = uart_read_bytes(UART_NUM_0, buf, sizeof(buf)-1, pdMS_TO_TICKS(0));
+    if(len < 0) return;
+	//buf[len] = '\0';
+	//ESP_LOGI("uart", "%u bytes" ,len);
+	switch (*buf) {
+	case 'P': print_task_list(); break;
+	case 'R': vTaskDelay(1); esp_restart(); break;
+	case 'D': ble_delete_all_bonds(); break;
+	//default: Serial.write(buf, len);//Serial.write('\n');break;
+	}
+	/* if(!strcmp(buf, "P")) {print_task_list();}
+	else if(!strcmp(buf, "R")) {xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite);} */
 }
 
 /*
@@ -321,7 +349,7 @@ bool wifi_sta_wait_conn() {
 }
 
 byte read_noinit() {
-	ESP_LOGI(TAG, "read_noinit(): %08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
+	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 	if(crc_impl(sets_noinit) == sets_noinit.crc) {
 		return sets_noinit.upd;
 	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
@@ -329,15 +357,8 @@ byte read_noinit() {
 }
 
 void write_noinit(byte val) {
-	ESP_LOGI(TAG, "write_noinit(): %u", val);
 	sets_noinit.upd = val;
 	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 }
 
 void set_main_partition() { write_noinit(0); }
-
-void log_print(const void *src, size_t size){ 
-#ifdef DEBUG_ENABLE
-	usb_serial_jtag_write_bytes(src, size, pdMS_TO_TICKS(10)); 
-#endif
-}
