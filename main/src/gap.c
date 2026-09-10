@@ -108,10 +108,10 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	case BLE_GAP_EVENT_ENC_CHANGE:/* Encryption change event */
 		/* Encryption has been enabled or disabled for this connection. */
 		if (likely(event->enc_change.status == 0)) {
-			ESP_LOGI(TAG, "connection encrypted!"); //ESP_LOGD(TAG,"enc_change.conn_handle = %u", event->enc_change.conn_handle);
+			ESP_LOGI(TAG, "connection encryption status: %d",event->enc_change.status);
 			ret = set_encryption(event->enc_change.conn_handle);
-			if(!ret) { conn_encrypted_cb(); break; } //if error goto REPEAT_PAIRING
-		} else { ESP_LOGW(TAG, "connection encryption failed, status: %d",event->enc_change.status); break; }
+			if(!ret) { conn_encrypted_cb(); adv_init(); break; }
+		} ESP_LOGW(TAG, "connection encryption status: %d",event->enc_change.status);
 		goto repeat; repeat: //break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 	case BLE_GAP_EVENT_REPEAT_PAIRING: 
 	static_assert(MYNEWT_VAL_BLE_HANDLE_REPEAT_PAIRING_DELETION);
@@ -144,7 +144,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	case BLE_GAP_EVENT_LINK_ESTAB: ESP_LOGI(TAG, "LINK_ESTAB"); break;
 	case BLE_GAP_EVENT_DATA_LEN_CHG: ESP_LOGI(TAG, "DATA_LEN_CHG"); break;
 	case BLE_GAP_EVENT_CONN_UPDATE_REQ: ESP_LOGI(TAG, "CONN_UPDATE_REQ"); break;
-	case BLE_GAP_EVENT_PARING_COMPLETE: ESP_LOGI(TAG, "PARING_COMPLETE");break;
+	case BLE_GAP_EVENT_PARING_COMPLETE: ESP_LOGI(TAG, "PARING_COMPLETE"); break;
 	case BLE_GAP_EVENT_IDENTITY_RESOLVED: ESP_LOGI(TAG, "IDENTITY_RESOLVED");break;
 	case BLE_GAP_EVENT_AUTHORIZE: ESP_LOGI(TAG, "AUTHORIZE"); break;
 	default: ESP_LOGW(TAG, "event->type %u",event->type);
@@ -154,6 +154,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 
 /* Public functions */
 void adv_init(void) {
+	if(ble_gap_ext_adv_active(0)) return;
 	const ble_uuid32_t uuid32 = BLE_UUID32_INIT(generate_salt());
 	__unused const ble_uuid16_t uuid16 = BLE_UUID16_INIT(0x1805);
 	__unused static uint8_t esp_uri[] = {BLE_GAP_URI_PREFIX_HTTPS, '/', '/', 'e', 's', 'p', 'r', 'e', 's', 's', 'i', 'f', '.', 'c', 'o', 'm'};
@@ -164,7 +165,7 @@ void adv_init(void) {
 		.uri = esp_uri, .uri_len = sizeof(esp_uri),
 	};
 	__unused struct ble_hs_adv_fields adv_fields = {
-		.flags = BLE_HS_ADV_F_DISC_GEN  | BLE_HS_ADV_F_BREDR_UNSUP , // Type 0x01
+		.flags = BLE_HS_ADV_F_DISC_LTD  | BLE_HS_ADV_F_BREDR_UNSUP , // Type 0x01
 		//.uuids16 =  &uuid16, .num_uuids16 = 1, .uuids16_is_complete = 1, //0x03
 		.uuids32 = &uuid32, .num_uuids32 = 1, .uuids32_is_complete = 1, //0x05
 		.name = (uint8_t *)ble_svc_gap_device_name(),
@@ -183,7 +184,7 @@ void adv_init(void) {
 	ext_adv_cfg.scan_req_notif = 1;
 	ext_adv_cfg.include_tx_power = 1;
 	ext_adv_cfg.itvl_min = BLE_GAP_ADV_ITVL_MS(500);
-	ext_adv_cfg.itvl_max = BLE_GAP_ADV_ITVL_MS(515);
+	ext_adv_cfg.itvl_max = BLE_GAP_ADV_ITVL_MS(510);
 	ext_adv_cfg.own_addr_type = own_addr_type; //not random
 	ext_adv_cfg.primary_phy = BLE_HCI_LE_PHY_1M;
 	ext_adv_cfg.secondary_phy = BLE_HCI_LE_PHY_CODED;
