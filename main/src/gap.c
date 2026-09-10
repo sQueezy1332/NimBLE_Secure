@@ -238,16 +238,41 @@ static void host_sync_cb() {
 
 static void ble_stack_reset(int reason) { ESP_LOGW("NimBLE", "nimble stack reset, reason: %d", reason);}; 
 
+static int my_ble_store_comparator(const void *a, const void *b) {
+    const struct ble_store_value_sec *sec_a = &((const my_ble_store_t *)a)->our_secs;
+    const struct ble_store_value_sec *sec_b = &((const my_ble_store_t *)b)->our_secs;
+    return (signed)sec_a->bond_count - (signed)sec_b->bond_count;
+}
+
 static int my_ble_store_find(const struct ble_store_key_sec *key_sec, const my_ble_store_t* value_secs, int num_value_secs) {
+	if(num_value_secs) {
+		size_t i = key_sec->idx;
+		((struct ble_store_key_sec *)key_sec)->idx = 0;
+		uint64_t key = (*(uint64_t*)&key_sec->peer_addr);
+		if(key == 0x00) {
+			ESP_LOGI(TAG, "finding BLE_ADDR_ANY key idx: %u", i);
+			if(i < num_value_secs)
+				return i;
+			return -1;
+		}
+		for (i = 0; i < num_value_secs; i++) {
+			const struct ble_store_value_sec *cur = (struct ble_store_value_sec *)&value_secs[i];
+			if (key == *(uint64_t*)&(cur->peer_addr)) {
+                ESP_LOGI(TAG, "finded addr: %s idx: %u", format_addr(cur->peer_addr.val), i);
+				return i;
+            }
+		}
+	}
+	return -1;
+	/*
     for (int i = 0, skipped = 0; i < num_value_secs; i++) {
-		//&value->sec.bond_count - &value->sec.peer_addr == 8
         const struct ble_store_value_sec *cur = (struct ble_store_value_sec *)&value_secs[i];
-        /* If peer_addr specified, must match */
-		ESP_LOGI(TAG, "addr: %s (%u)", format_addr(key_sec->peer_addr.val), key_sec->peer_addr.type);
+        //If peer_addr specified, must match
         if (ble_addr_cmp(&key_sec->peer_addr, BLE_ADDR_ANY) != 0) {  // != ANY
-            if (ble_addr_cmp(&cur->peer_addr, &key_sec->peer_addr) != 0) {
+            if (ble_addr_cmp(&key_sec->peer_addr, &cur->peer_addr) != 0) {
                 continue;
             }
+			ESP_LOGI(TAG, "finded addr: %s idx: %u", format_addr(cur->peer_addr.val), i);
         }
         if (key_sec->idx > skipped) {
             skipped++;
@@ -256,65 +281,76 @@ static int my_ble_store_find(const struct ble_store_key_sec *key_sec, const my_b
         return i;
     }
     return -1;
+	*/
+}
+//extern int ble_store_config_delete_obj(void *, int, int, int *); 
+static int ble_store_config_delete_obj(void *values, size_t value_size, size_t idx, int *count) {
+    uint8_t *dst, *src;
+    size_t move_count;
+    //BLE_HS_DBG_ASSERT(idx >= 0 && idx < *num_values && *num_values > 0);
+	assert(idx < *count);
+    if (idx < --(*count)) { //if only 1 bond in record simply change count to 0
+        dst = values;
+        dst += idx * value_size;
+        src = dst + value_size;
+        move_count = *count - idx;
+        memmove(dst, src, move_count * value_size);
+    }
+    return 0;
+}
+
+static int ble_store_config_delete_hook(int obj_type, const union ble_store_key *key) {
+	ESP_LOGI(TAG, "delete obj_type %u", obj_type);
+	int idx;
+	switch (obj_type) {
+		case BLE_STORE_OBJ_TYPE_OUR_SEC: //return BLE_HS_ENOENT;
+			idx = my_ble_store_find(&key->sec, bonds, num_peers);
+			if(idx == -1)
+				break;
+			return ble_store_config_delete_obj(bonds, sizeof(bonds[0]), idx, &num_peers);
+		case BLE_STORE_OBJ_TYPE_PEER_SEC: 
+			idx = my_ble_store_find(&key->sec, (my_ble_store_t*)&bonds->peer_secs, num_peers);
+			if(idx == -1) 
+				break;
+			return ble_store_config_delete_obj(bonds, sizeof(bonds[0]), idx, &num_peers);
+			break;
+			
+		default: break;
+	}
+	return ble_store_config_delete(obj_type, key);
 }
 
 static int ble_store_config_read_hook(int obj_type, const union ble_store_key *key, union ble_store_value *value) {
-	ESP_LOGI(TAG, "read obj_type %u", obj_type);
-	if(!ble_store_config_read(obj_type, key, value)) 
-		return 0;
+	int idx = ble_store_config_read(obj_type, key, value);
+	ESP_LOGI(TAG, "read obj_type %u %c", obj_type, idx == 0 ? '+' : '-');
+	if(idx == 0) { return 0; }
 	const my_ble_store_t* ptr;
 	switch (obj_type) {
-		case BLE_STORE_OBJ_TYPE_OUR_SEC: return BLE_HS_ENOENT;
+		case BLE_STORE_OBJ_TYPE_OUR_SEC:
 			ptr = &bonds[0];
 			break;
 		case BLE_STORE_OBJ_TYPE_PEER_SEC:
 			ptr = (my_ble_store_t*)&bonds->peer_secs;
 			break;
 		default:
-			return BLE_HS_EDISABLED;
+			ESP_LOGD(TAG, "\tBLE_HS_ENOENT");
+			return BLE_HS_ENOENT;
 	}
-	//for (size_t i = 0; i < (sizeof(bonds) / sizeof(bonds[0])); i++) {
-		static_assert(sizeof(struct ble_store_value_sec) == 88);
-		//const struct ble_store_value_sec* cur = &ptr[i].our_secs;
-		//if (ble_addr_cmp(&key->sec.peer_addr, BLE_ADDR_ANY) != 0) {  // != ANY
-		//ESP_LOGW(TAG, "BLE_ADDR_ANY");
-		//key->sec.idx = 0;
-		int idx = my_ble_store_find(&key->sec, ptr, num_peers);
-            /*if (*(uint64_t*)&key->sec.peer_addr != *(uint64_t*)&(cur->peer_addr)) {
-                continue;
-            }*/
-        //}
-		if(key->sec.idx) { ESP_LOGI(TAG, "key->sec.idx: %u", key->sec.idx); }
-		ESP_LOGD(TAG, "idx: %d", idx);
+		idx = my_ble_store_find(&key->sec, ptr, num_peers);
 		if (idx == -1) {
         	return BLE_HS_ENOENT;
     	}
     	value->sec = ptr[idx].our_secs;
-	//}
 	return 0;
-}
-
-static int my_ble_store_comparator(const void *a, const void *b) {
-    const struct ble_store_value_sec *sec_a = &((const my_ble_store_t *)a)->our_secs;
-    const struct ble_store_value_sec *sec_b = &((const my_ble_store_t *)b)->our_secs;
-    return (signed)sec_a->bond_count - (signed)sec_b->bond_count;
 }
 
 static int ble_store_config_write_hook(int obj_type, const union ble_store_value *val) {
 	ESP_LOGI(TAG, "write obj_type %u", obj_type);
-	/*if(obj_type == BLE_STORE_OBJ_TYPE_PEER_ADDR) {
-		ESP_LOGD(TAG, "peer_rpa_addr: %s (%u)",  format_addr(val->rpa_rec.peer_rpa_addr.val), val->rpa_rec.peer_rpa_addr.type);
-		ESP_LOGD(TAG, "peer_addr: %s (%u)", format_addr(val->rpa_rec.peer_addr.val), val->rpa_rec.peer_addr.type);
-	} else if (obj_type == BLE_STORE_OBJ_TYPE_OUR_SEC) {
-		ESP_LOGD(TAG, "OUR_SEC: %s (%u)",  format_addr(val->sec.peer_addr.val), val->sec.peer_addr.type);
-	} else if (obj_type == BLE_STORE_OBJ_TYPE_PEER_SEC) {
-		ESP_LOGD(TAG, "PEER_SEC: %s (%u)",  format_addr(val->sec.peer_addr.val), val->sec.peer_addr.type);
-	}*/
 	my_ble_store_t *ptr;
 	switch (obj_type) {
-		//case BLE_STORE_OBJ_TYPE_OUR_SEC:
-			//ptr = &bonds[0];
-			//break;
+		case BLE_STORE_OBJ_TYPE_OUR_SEC:
+			ptr = &bonds[0];
+			break;
 		case BLE_STORE_OBJ_TYPE_PEER_SEC:
 			ptr = (my_ble_store_t*)&bonds->peer_secs;
 			break;
@@ -324,25 +360,22 @@ static int ble_store_config_write_hook(int obj_type, const union ble_store_value
 			ESP_LOGD(TAG, "\tBLE_HS_EDISABLED");
 			return BLE_HS_EDISABLED; 
 	}
-	int *num_secs = &num_peers;
-	uint16_t *bond_count = &bonds_count;
-    int idx = my_ble_store_find((struct ble_store_key_sec*)&val->sec, ptr, *num_secs);
+    int idx = my_ble_store_find((struct ble_store_key_sec*)&val->sec, ptr, num_peers);
     if (idx == -1) {
-        if (*num_secs >= sizeof(bonds) / sizeof(bonds[0])) {
-            ESP_LOGD(TAG, "error persisting peer sec; too many entries ""(%d)\n", *num_secs);
+        if (num_peers >= sizeof(bonds) / sizeof(bonds[0])) {
+            ESP_LOGD(TAG, "error persisting peer sec; too many entries ""(%d)\n", num_peers);
             return BLE_HS_ENOMEM; //return BLE_HS_ESTORE_CAP;
         }
-        idx = *num_secs;
-        (*num_secs)++;
-		ESP_LOGI(TAG, "new peer #%d", *num_secs);
+        idx = num_peers;
+        (num_peers)++;
+		ESP_LOGI(TAG, "new peer №%d", num_peers);
     }
     ptr[idx].our_secs = *&val->sec;
-    ptr[idx].our_secs.bond_count = ++(*bond_count);
-	ESP_LOGD(TAG, "bond_count: %d", *num_secs, *bond_count);
+    ptr[idx].our_secs.bond_count = ++(bonds_count);
+	ESP_LOGD(TAG, "bond_count: %d", bonds_count);
     /* Ensure entries are sorted at all times */
-    //qsort(ptr, *num_secs, sizeof(my_ble_store_t), my_ble_store_comparator);
-	/*
-    if (*bond_count > (UINT16_MAX - 5)) {
+    qsort(ptr, num_peers, sizeof(my_ble_store_t), my_ble_store_comparator);
+    /*if (bonds_count > (UINT16_MAX - 5)) { //not need because buffer is temporary
         rc = ble_restore_peer_sec_nvs();
         if (rc != 0) {
             return rc;
@@ -352,6 +385,14 @@ static int ble_store_config_write_hook(int obj_type, const union ble_store_value
 }
 
 void ble_hs_cfg_init() {
+	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC);
+	static_assert(!CONFIG_BT_NIMBLE_MAX_CCCDS);
+	static_assert(sizeof(struct ble_store_value_sec) == 88);
+	{
+		struct ble_store_value_sec tmp;
+		bool offset = ((size_t)&tmp.bond_count - (size_t)&tmp.peer_addr) == 8;
+		assert(offset); //check padding for my_ble_store_find and find by ble_store_value
+	}
 	//ble_store_config_init();
 	ble_hs_cfg.reset_cb = ble_stack_reset;//on_stack_reset is called when host resets BLE stack due to errors
 	ble_hs_cfg.sync_cb = host_sync_cb;
@@ -359,7 +400,7 @@ void ble_hs_cfg_init() {
 	ble_hs_cfg.store_read_cb = ble_store_config_read_hook;
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
 	//ble_hs_cfg.store_write_cb = ble_store_config_write;
-	ble_hs_cfg.store_delete_cb = ble_store_config_delete;
+	ble_hs_cfg.store_delete_cb = ble_store_config_delete_hook;
 	ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 	ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
 	ble_hs_cfg.sm_bonding = 1;
@@ -374,29 +415,23 @@ void ble_hs_cfg_init() {
 
 static void proc_write_nvs(int obj_type, const union ble_store_key *key) {
 	union ble_store_value val;
+	//int idx = my_ble_store_find(&key->sec, ptr, num_peers);
 	if(ble_store_read(obj_type, key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); }
 	else { int rc; if((rc = ble_store_write(obj_type, &val))) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
 }
-/*
-static void proc_write_nvs(int obj_type, const ble_addr_t *key) {
-	union ble_store_value val;
-	if(ble_store_read(obj_type, key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); return; }
-	int rc; if((rc = ble_store_write(obj_type, &val))) {  }; //log internal
-}*/
-	
+
 /**
  *	OUR_SEC (1), PEER_SEC (2)
- *	CCCD Client Characteristic Configuration Descriptor (3)
+ *	CCCD - Client Characteristic Configuration Descriptor (3)
  *	RPA rec - Resolvable Private Address record (6)
  *	IRK - Identity Resolving Key (7)
- *	CSFC Client Supported Features Characteristic 	(8)
+ *	CSFC - Client Supported Features Characteristic 	(8)
+ *  CSRK - Connection Signature Resolving Key
+ *	LTK - Long Term Key
  *	BLE_HS_ESTORE_CAP if the database is full.
  *	
  */
 int save_bonding(uint16_t h_conn) {
-	
-	static_assert(!CONFIG_BT_NIMBLE_MAX_CCCDS); //ble_store_ram_init()
-	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC);
 	union ble_store_key key; key.sec.idx = 0;
 	int rc = ble_gap_conn_find(h_conn, &desc);
 	if(rc) return rc; //log internal
