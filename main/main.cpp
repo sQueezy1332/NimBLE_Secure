@@ -142,21 +142,23 @@ int ble_delete_all_bonds() {
 	nvsApi nimble_nvs(NIMBLE_NVS_NAMESPACE, NVS_READWRITE);
 	esp_err_t ret = nvs_erase_all(nimble_nvs);
 	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %d", ret); }
+/*
 
-#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 memset(ble_store_config_our_secs, 0, sizeof(ble_store_config_our_secs)); ble_store_config_num_our_secs = 0;
 ble_store_config_our_bond_count = 0;
 //ble_store_config_peer_bond_count 0;
 memset(ble_store_config_peer_secs, 0, sizeof(ble_store_config_peer_secs)); ble_store_config_num_peer_secs = 0;
-#endif
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
 memset(ble_store_config_cccds, 0, sizeof(ble_store_config_cccds)); ble_store_config_num_cccds = 0;
-#endif
+
 memset(ble_store_config_csfcs, 0, sizeof(ble_store_config_csfcs)); ble_store_config_num_csfcs = 0;
 memset(ble_store_config_rpa_recs, 0, sizeof(ble_store_config_rpa_recs)); ble_store_config_num_rpa_recs = 0;
 memset(ble_store_config_local_irks, 0, sizeof(ble_store_config_local_irks)); ble_store_config_num_local_irks = 0;
-	return ret;
+	
+	*/
+return ret;
 #endif
+return ENOTSUP;
 }
 
 void nvs_write_sets(nvsApi nvs) {
@@ -264,7 +266,7 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 	} *///else if (type == UUID32_DATA && len == 9 && *(uint32_t*)(&data[++i]) == ...) { *(uint32_t*)(&data[i+=4])  }
 }
 
-void parse_rx_data(const ble_gap_event* event) {
+int parse_rx_data(const ble_gap_event* event) {
 	//extern ble_gap_conn_desc desc;
 	const os_mbuf* buf = event->notify_rx.om;
 	enum { 
@@ -278,8 +280,12 @@ void parse_rx_data(const ble_gap_event* event) {
 		NVS_ERASE_ALL_EXC,
 		BLE_STORE_CLEAR
 	};
-	if(buf->om_len != 5)  { ESP_LOGW(TAG, "!om_len"); return; }
-	if(*reinterpret_cast<uint32_t*>(buf->om_data) != DEF_CMD_PASS) { ESP_LOGW(TAG, "!pass"); return; }
+	if(buf->om_len != 5)  { 
+		ESP_LOGW(TAG, "!om_len"); return BLE_HS_EMSGSIZE; 
+	}
+	if(*reinterpret_cast<uint32_t*>(buf->om_data) != DEF_CMD_PASS) { 
+		ESP_LOGW(TAG, "!pass"); return BLE_HS_EAUTHEN; 
+	}
 	//auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
 	uint8_t val = buf->om_data[4];
 	switch (val) {
@@ -293,7 +299,7 @@ void parse_rx_data(const ble_gap_event* event) {
 		break;
 	case VALID_KEY: revoke_ota_rollback();
 		break;
-	case SAVE_MAC: save_bonding(event->notify_rx.conn_handle);
+	case SAVE_MAC: return save_bonding(event->notify_rx.conn_handle);
 		break;
 	case NVS_ERASE_ALL: nvsEraseAll(nullptr);
 		break;
@@ -304,7 +310,9 @@ void parse_rx_data(const ble_gap_event* event) {
 	case OFFSET: DEBUG(task_list().get());
 		break;
 	default: ESP_LOGW(TAG, "os_mbuf 0x%02X", val);
+		return BLE_HS_EINVAL;
 	}
+	return 0;
 }
 
 std::unique_ptr<char[]> task_list(size_t* len) {
