@@ -258,7 +258,7 @@ static int my_ble_store_find(const struct ble_store_key_sec *key_sec, const my_b
 		for (i = 0; i < num_value_secs; i++) {
 			const struct ble_store_value_sec *cur = (struct ble_store_value_sec *)&value_secs[i];
 			if (key == *(uint64_t*)&(cur->peer_addr)) {
-                ESP_LOGI(TAG, "finded addr: %s idx: %u", format_addr(cur->peer_addr.val), i);
+                ESP_LOGI(TAG, "finded addr [%u]: %s",i, format_addr(cur->peer_addr.val));
 				return i;
             }
 		}
@@ -360,7 +360,7 @@ static int ble_store_config_write_hook(int obj_type, const union ble_store_value
 			ESP_LOGD(TAG, "\tBLE_HS_EDISABLED");
 			return BLE_HS_EDISABLED; 
 	}
-    int idx = my_ble_store_find((struct ble_store_key_sec*)&val->sec, ptr, num_peers);
+    int idx = my_ble_store_find((struct ble_store_key_sec*)&val->sec, bonds, num_peers);
     if (idx == -1) {
         if (num_peers >= sizeof(bonds) / sizeof(bonds[0])) {
             ESP_LOGD(TAG, "error persisting peer sec; too many entries ""(%d)\n", num_peers);
