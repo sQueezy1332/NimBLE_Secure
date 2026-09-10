@@ -19,7 +19,6 @@ __unused static const ble_uuid16_t CHR_SPP = BLE_UUID16_INIT(0xABF1);
 
 //#include "heart_rate.h"
 extern void gatt_cts_service_init();
-extern char* get_serial_buf();  extern uint8_t get_serial_len();
 /* Private function declarations */
 static int io_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
 static int serial_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
@@ -33,8 +32,9 @@ typedef uint8_t subs_t;
 static subs_t subs_io, subs_spp, __unused subs_heart;
 static subs_t conn_encrypted;
 
-static_assert(CONFIG_BT_NIMBLE_MAX_CONNECTIONS <= sizeof(subs_t) * 8 -1);
-static const size_t max_conns = CONFIG_BT_NIMBLE_MAX_CONNECTIONS;
+static_assert(CONFIG_BT_NIMBLE_MAX_CONNECTIONS <= sizeof(subs_t) * 8 -2); 
+static_assert(MYNEWT_VAL_BLE_STORE_MAX_BONDS <= sizeof(subs_t) * 8 -2);
+static const size_t max_conns = 2 + CONFIG_BT_NIMBLE_MAX_CONNECTIONS;
 
 
 /* TAG services table */
@@ -128,13 +128,14 @@ static int io_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_
 	}
 	return BLE_ATT_ERR_UNLIKELY;
 }
-
+/*
 static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+	extern char* get_serial_buf();  extern uint8_t get_serial_len();
 	static const char *TAG = "SPP";
 	static char spp_buf[64] = {};
 	if (attr_handle != h_spp_chr) { ESP_LOGW(TAG, "attr_handle %u", attr_handle); return BLE_ATT_ERR_UNLIKELY; }
 	switch (ctxt->op) {
-	case BLE_GATT_ACCESS_OP_WRITE_CHR: { /* WRITE characteristic event */
+	case BLE_GATT_ACCESS_OP_WRITE_CHR: {  WRITE characteristic event
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "write", conn_handle, attr_handle);
 		}
@@ -143,7 +144,7 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 			spp_buf[out_len] = '\0'; ESP_LOGI(TAG, "%s", spp_buf);
 		}
 		return 0;
-	case BLE_GATT_ACCESS_OP_READ_CHR: { /* READ characteristic event */
+	case BLE_GATT_ACCESS_OP_READ_CHR: {  READ characteristic event
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "read", conn_handle, attr_handle);
 		}
@@ -152,7 +153,7 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 	default: ESP_LOGW(TAG, "opcode: %u", ctxt->op);
 	}
 	return BLE_ATT_ERR_UNLIKELY;
-}
+}*/
 /* Public functions */
 
 void gatt_svr_init(void) {
@@ -162,7 +163,7 @@ void gatt_svr_init(void) {
 	gatt_cts_service_init(); //ble_svc_cts_time_updated();
 }
 
-int need_notify_io() { return subs_io; }
+uint8_t need_notify_io() { return subs_io; }
 
 int clear_connection(uint16_t h_conn) {
 	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
@@ -225,13 +226,13 @@ int gatt_svr_subscribe_cb(const struct ble_gap_event *event) {
 	}
 	bool notify = event->subscribe.cur_notify | event->subscribe.cur_indicate;
 #ifdef AUTO_IO_CHR
-	if(attr_handle == h_io_chr) { bitWrite(subs_io, h_conn -1, notify); }
+	if(attr_handle == h_io_chr) { bitWrite(subs_io, h_conn, notify); }
 #endif
 #ifdef SPP_CHR
-	else if(attr_handle == h_spp_chr)  { bitWrite(subs_spp, h_conn -1, notify); }
+	else if(attr_handle == h_spp_chr)  { bitWrite(subs_spp, h_conn, notify); }
 #endif
 #ifdef HEART_RATE_CHR
-	else if (attr_handle == h_heart_chr)  { bitWrite(subs_heart, h_conn -1, notify); }
+	else if (attr_handle == h_heart_chr)  { bitWrite(subs_heart, h_conn, notify); }
 #endif
 	return BLE_ATT_ERR_ATTR_NOT_FOUND;
 }
