@@ -84,7 +84,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 				event->notify_rx.conn_handle, event->notify_rx.attr_handle,
 				event->notify_rx.indication ? "Indication":  "Notification");
 		print_rx_data(event->notify_rx.om); //event->notify_rx.conn_handle
-		parse_rx_data(event); return 0xDEADBEEF; //todo
+		return parse_rx_data(event);
 		break;
 	case BLE_GAP_EVENT_NOTIFY_TX:
 		if (unlikely((event->notify_tx.status != 0) && (event->notify_tx.status != BLE_HS_EDONE))) {
@@ -415,9 +415,8 @@ void ble_hs_cfg_init() {
 
 static void proc_write_nvs(int obj_type, const union ble_store_key *key) {
 	union ble_store_value val;
-	//int idx = my_ble_store_find(&key->sec, ptr, num_peers);
 	if(ble_store_read(obj_type, key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); }
-	else { int rc; if((rc = ble_store_write(obj_type, &val))) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
+	else { int rc; if(()) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
 }
 
 /**
@@ -432,7 +431,6 @@ static void proc_write_nvs(int obj_type, const union ble_store_key *key) {
  *	
  */
 int save_bonding(uint16_t h_conn) {
-	union ble_store_key key; key.sec.idx = 0;
 	int rc = ble_gap_conn_find(h_conn, &desc);
 	if(rc) return rc; //log internal
 	if (desc.peer_id_addr.type & BLE_ADDR_RANDOM) {
@@ -444,14 +442,19 @@ int save_bonding(uint16_t h_conn) {
 		return BLE_HS_EENCRYPT;
 	}
 	print_conn_desc(&desc);
+	union ble_store_key key = { .sec.peer_addr = desc.peer_id_addr };
+	my_ble_store_t* ptr = &bonds;
+	rc = my_ble_store_find(&key.sec, ptr, num_peers);
+	if (rc == -1) {
+		ptr = (my_ble_store_t*)&bonds->peer_secs;
+		rc = my_ble_store_find(&key.sec, ptr, num_peers);
+		if (rc == -1) return BLE_HS_ENOENT;
+	}
 	ble_hs_cfg.store_write_cb = ble_store_config_write;
-		key.sec.peer_addr = desc.our_id_addr;
-		proc_write_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, &key); //1
-		key.sec.peer_addr = desc.peer_id_addr;
-		proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_SEC, &key); //2
-		//proc_write_nvs(BLE_STORE_OBJ_TYPE_PEER_ADDR, &key); //6
+	rc = ble_store_write(BLE_STORE_OBJ_TYPE_OUR_SEC, (union ble_store_value *)&ptr->our_secs); //1
+	if(rc == 0)
+		rc = ble_store_write(BLE_STORE_OBJ_TYPE_PEER_SEC, (union ble_store_value *)&ptr->our_secs); //2
 	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
-	//ESP_LOGI(TAG, "save_bonding rc %d", rc);
 	return rc;
 }
 
