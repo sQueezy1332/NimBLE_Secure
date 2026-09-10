@@ -413,12 +413,6 @@ void ble_hs_cfg_init() {
 	ble_store_config_conf_init();
 }
 
-static void proc_write_nvs(int obj_type, const union ble_store_key *key) {
-	union ble_store_value val;
-	if(ble_store_read(obj_type, key, &val)) { ESP_LOGW(TAG, "No such entry %u", obj_type); }
-	else { int rc; if(()) { ESP_LOGW(TAG, "rc = %d", rc); };}; //log internal
-}
-
 /**
  *	OUR_SEC (1), PEER_SEC (2)
  *	CCCD - Client Characteristic Configuration Descriptor (3)
@@ -442,8 +436,8 @@ int save_bonding(uint16_t h_conn) {
 		return BLE_HS_EENCRYPT;
 	}
 	print_conn_desc(&desc);
-	union ble_store_key key = { .sec.peer_addr = desc.peer_id_addr };
-	my_ble_store_t* ptr = &bonds;
+	union ble_store_key key = { .sec.peer_addr = desc.peer_id_addr, .sec.idx = 0 };
+	my_ble_store_t* ptr = bonds;
 	rc = my_ble_store_find(&key.sec, ptr, num_peers);
 	if (rc == -1) {
 		ptr = (my_ble_store_t*)&bonds->peer_secs;
