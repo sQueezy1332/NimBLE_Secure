@@ -46,43 +46,9 @@ extern void set_ble_device_name();
 extern void adv_complete_cb();
 extern void disc_complete_cb();
 extern void conn_encrypted_cb();
-extern void parse_rx_data(const struct ble_gap_event*);
+extern int parse_rx_data(const struct ble_gap_event*);
 
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-#if !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)
-extern struct ble_store_value_sec
-    ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_our_secs;
-
-extern uint16_t ble_store_config_our_bond_count;
-extern uint16_t ble_store_config_peer_bond_count;
-
-extern struct ble_store_value_sec
-    ble_store_config_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-
-extern int ble_store_config_num_peer_secs;
-
-#if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
-extern struct ble_store_value_cccd
-    ble_store_config_cccds[MYNEWT_VAL(BLE_STORE_MAX_CCCDS)];
-extern int ble_store_config_num_cccds;
-#endif
-
-#if MYNEWT_VAL(BLE_STORE_MAX_CSFCS)
-extern struct ble_store_value_csfc
-     ble_store_config_csfcs[MYNEWT_VAL(BLE_STORE_MAX_CSFCS)];
-extern int ble_store_config_num_csfcs;
-#endif
-
-extern struct ble_store_value_rpa_rec
-    ble_store_config_rpa_recs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_rpa_recs;
-
-extern struct ble_store_value_local_irk
-    ble_store_config_local_irks[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_local_irks;
-
-#endif /* !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) */
 
 typedef struct {
 	struct ble_store_value_sec our_secs;
