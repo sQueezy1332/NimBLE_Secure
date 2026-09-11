@@ -1,8 +1,9 @@
 #include "credentials.h"
 #include "main.h"
-#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 
 extern "C" void app_main() {
+	const int _size = sizeof(my_ble_store_nvs);
+	static_assert(_size == 64);
 	nvs_init(); //read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
 	pinMode(13, OUTPUT);
@@ -13,7 +14,7 @@ extern "C" void app_main() {
 	esp_log_level_set("nvs", ESP_LOG_INFO);esp_log_level_set("wifi", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
 	totp_test();
-	nvs_test("cal_data");
+	nvs_test("cal_data"); //F3 B2 6A 12 D3 95 2E FB 3F EB B3 51 A1 8E B1 F9 
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
 	xTaskCreate(usb_cdc_task, "cdc", 4096, nullptr, 5, nullptr);
 	vTaskPrioritySet(NULL, 15);
@@ -28,7 +29,7 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
 //#ifdef CONFIG_FACTORY_FIRMWARE
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
-			if(read_noinit()) { wifi_init(); return; }
+			if(read_noinit().ota) { wifi_init(); return; }
 //#else
 #ifdef CONFIG_ADC_LINE
 	const gpio_config_t conf2 = { .pin_bit_mask = BIT(PIN_LINE), .mode = GPIO_MODE_INPUT,};
@@ -41,7 +42,9 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	nvs_read_sets();
 	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	ESP_ERROR_CHECK(nimble_port_init());
-	gap_init();
+	ble_svc_gap_init();
+	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
+	set_ble_device_name();
 	gatt_svr_init();
 	ble_hs_cfg_init();
 	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
@@ -163,7 +166,7 @@ return ENOTSUP;
 
 void nvs_write_sets(nvsApi nvs) {
 	sets.crc = crc_impl(sets); 
-	ESP_LOGD("NVS","patch %u, upd %u, val %u, crc %02X", sets.patch, sets.upd, sets.flag, sets.crc);
+	ESP_LOGD("NVS","patch %u, ota %u, val %u, crc %02X", sets.patch, sets.ota, sets.flag, sets.crc);
 	CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_SETS, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
 }
@@ -249,7 +252,7 @@ void revoke_ota_rollback() {
 	esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
 }
 
-void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
+void parse_adv(const struct ble_gap_ext_disc_desc* event) {
 	const auto* data = event->data, len = event->length_data;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
 		//extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
@@ -264,6 +267,12 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 			ble_gap_disc_cancel(); adv_init();
 		}
 	} *///else if (type == UUID32_DATA && len == 9 && *(uint32_t*)(&data[++i]) == ...) { *(uint32_t*)(&data[i+=4])  }
+}
+
+extern "C" void host_sync_cb() {
+	int ret = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK);
+	CHECK_(ret);
+	ble_scan_init();//set_random_addr();
 }
 
 int parse_rx_data(const ble_gap_event* event) {
@@ -290,12 +299,12 @@ int parse_rx_data(const ble_gap_event* event) {
 	uint8_t val = buf->om_data[4];
 	switch (val) {
 	case OTA_KEY://ESP_ERROR_CHECK(nimble_port_stop());
-		write_noinit(1);
+		write_noinit_ota(1);
 		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 		ESP_LOGI(TAG, "reboot to FACTORY...");
 	case RESTART_KEY: ESP_LOGI(TAG, "RESTART"); esp_restart(); 
 		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
-	case MAIN_KEY: write_noinit(0);
+	case MAIN_KEY: write_noinit_ota(0);
 		break;
 	case VALID_KEY: revoke_ota_rollback();
 		break;
@@ -382,14 +391,16 @@ rdy:            dest[i] = result;
 }
 
 void set_ble_device_name() {
-	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=16);
+	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
 	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; static_assert(name_len >= 7);
-	char* name = const_cast<char*>(ble_svc_gap_device_name()); uint8_t mac[8];
-	*(name += name_len) = '-';
-	CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
+	char* name = const_cast<char*>(ble_svc_gap_device_name());
+	*(name + name_len) = '-';
+	uint8_t mac[8]; CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
 	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
-	sprintf(name + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
-	ESP_LOGI(TAG, "gap_device_name: %s", ble_svc_gap_device_name());
+	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
+	size_t len = strlen(name);
+	name[MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH] = len;
+	ESP_LOGI(TAG, "gap_device_name: %s len: %u", name, len);
 }
 
 void set_wifi_hostname() {
@@ -403,7 +414,7 @@ void set_wifi_hostname() {
 	if(new_name) { ESP_LOGI(TAG, "hostname: %s", new_name); }
 }
 
-uint32_t generate_salt() {
+uint32_t generate_uuid32() {
 	//static TickType_t last_change = __INT32_MAX__; 
 	static time_t salt = __INT32_MAX__;
 	__unused TickType_t sec = xTaskGetTickCount();
