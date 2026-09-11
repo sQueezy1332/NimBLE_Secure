@@ -31,30 +31,48 @@ struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg;
 struct ble_gap_event; struct os_mbuf; struct ble_gatt_register_ctxt;
 union ble_store_key; union ble_store_value;
 
-int gap_init();
 void ble_hs_cfg_init();
 void ble_scan_init();
 void adv_init();
 int save_bonding(uint16_t h_conn);
 int is_connection_encrypted(uint16_t h_conn);
 
-extern uint32_t get_pincode();
-extern void parse_adv_cb(const struct ble_gap_ext_disc_desc*);
-extern uint32_t generate_salt();
-extern void print_task_list();
-extern void set_ble_device_name();
-extern void adv_complete_cb();
-extern void disc_complete_cb();
-extern void conn_encrypted_cb();
-extern int parse_rx_data(const struct ble_gap_event*);
+__weak_symbol void host_sync_cb();
+__weak_symbol uint32_t get_pincode();
+__weak_symbol uint32_t generate_uuid32();
+__weak_symbol void parse_adv(const struct ble_gap_ext_disc_desc*);
+__weak_symbol void adv_complete_cb();
+__weak_symbol void scan_complete_cb();
+__weak_symbol void connect_err_cb(int);
+__weak_symbol void disconnect_cb();
+__weak_symbol void conn_encrypted_cb(); 
+__weak_symbol int parse_rx_data(const struct ble_gap_event*);
 
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 
 typedef struct {
-	struct ble_store_value_sec our_secs;
+	//struct ble_store_value_sec our_secs;
 	struct ble_store_value_sec peer_secs;
-	//struct ble_store_value_rpa_rec ble_store_config_rpa_recs;
 } my_ble_store_t; //MYNEWT_VAL_BLE_MAX_CONNECTIONS
+
+struct my_ble_store_nvs {
+    ble_addr_t peer_addr;
+#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
+    uint16_t bond_count;
+#endif
+    uint8_t key_size;
+    uint16_t ediv;
+    uint64_t rand_num;
+    uint8_t ltk[16];
+	uint8_t irk[16];
+    //uint8_t csrk[16];
+	//uint8_t csrk_present:1;
+    uint8_t ltk_present:1;
+	uint8_t irk_present:1;
+	uint8_t authenticated:1;
+	uint8_t sc:1;
+	uint32_t sign_counter;
+};
 
 #endif /* !MYNEWT_VAL(BLE_STORE_MAX_BONDS) */
 
