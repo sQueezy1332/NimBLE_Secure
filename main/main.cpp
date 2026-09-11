@@ -14,7 +14,7 @@ extern "C" void app_main() {
 	esp_log_level_set("nvs", ESP_LOG_INFO);esp_log_level_set("wifi", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
 	totp_test();
-	nvs_test("cal_data"); //F3 B2 6A 12 D3 95 2E FB 3F EB B3 51 A1 8E B1 F9 
+	nvs_test("cal_data");
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
 	xTaskCreate(usb_cdc_task, "cdc", 4096, nullptr, 5, nullptr);
 	vTaskPrioritySet(NULL, 15);
@@ -43,10 +43,10 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	ESP_ERROR_CHECK(nimble_port_init());
 	ble_svc_gap_init();
+	ble_hs_cfg_init();
+	gatt_svr_init();
 	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
 	set_ble_device_name();
-	gatt_svr_init();
-	ble_hs_cfg_init();
 	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 	#if PIN_LED_MASK
