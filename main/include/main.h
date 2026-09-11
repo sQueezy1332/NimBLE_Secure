@@ -16,6 +16,7 @@
 #include "syscfg/syscfg.h"
 #include "nimble/nimble_port.h"
 #include "host/ble_hs.h"
+#include "services/gap/ble_svc_gap.h"
 //#include "host/util/util.h"
 #include "gap.h"
 #include "gatt.h"
@@ -82,7 +83,7 @@ static const char* NVS = "NVS";
 #define PATTERN_CHR_NUM    (1)   /*!< Set the number of consecutive and identical characters received by receiver which defines a UART pattern*/
 
 using String = std::string;
-typedef struct { byte patch , upd , flag;  uint8_t crc; } sets_t;
+typedef struct { byte patch , ota , flag;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
 //NIMBLE_HS_STACK_SIZE
@@ -121,7 +122,6 @@ void set_wifi_hostname();
 size_t strtoB(const char* str, byte* buf, size_t buf_len);
 template <bool = false, char = 0> int bytes_to_str(const byte* src, char* dest, size_t data_size);
 int bytes_to_str_bigend(const byte* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
-//void generate_salt();
 
 bool wifi_sta_wait_conn(); 
 void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
@@ -161,9 +161,13 @@ void patch_func(uint64_t period) {
 
 void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
 
-void disc_complete_cb() { ble_scan_init(); }
+void scan_complete_cb() { ble_scan_init(); }
 
-void conn_encrypted_cb() { impl_io_on(); }
+void connect_err_cb(int status) {};
+
+void disconnect_cb() { adv_init(); };
+
+void conn_encrypted_cb() { impl_io_on(); adv_init(); }
 
 void timer_patch_off_cb(void *) { 
     RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
@@ -348,17 +352,17 @@ bool wifi_sta_wait_conn() {
 	return false;
 }
 
-byte read_noinit() {
+sets_t read_noinit() {
 	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 	if(crc_impl(sets_noinit) == sets_noinit.crc) {
-		return sets_noinit.upd;
+		return sets_noinit;
 	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
-	return 0;
+	return {};
 }
 
-void write_noinit(byte val) {
-	sets_noinit.upd = val;
+void write_noinit_ota(byte val) {
+	sets_noinit.ota = val;
 	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 }
 
-void set_main_partition() { write_noinit(0); }
+void set_main_partition() { write_noinit_ota(0); }
