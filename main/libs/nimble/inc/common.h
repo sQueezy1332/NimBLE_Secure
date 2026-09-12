@@ -22,7 +22,7 @@
 //#include "nimble/ble.h"
 #include "modlog/modlog.h"
 
-#if _ESP_LOG_ENABLED(5)
+#if _ESP_LOG_ENABLED(4)
 #define NIMLOG(msg, ...) esp_rom_printf((msg), ##__VA_ARGS__)
 #define SCAN_PASSIVE 0 
 #else
