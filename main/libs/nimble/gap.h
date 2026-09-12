@@ -40,7 +40,7 @@ int is_connection_encrypted(uint16_t h_conn);
 __weak_symbol void host_sync_cb();
 __weak_symbol uint32_t get_pincode();
 __weak_symbol uint32_t generate_uuid32();
-__weak_symbol void parse_adv(const struct ble_gap_ext_disc_desc*);
+__weak_symbol void parse_adv_cb(const struct ble_gap_ext_disc_desc*);
 __weak_symbol void adv_complete_cb();
 __weak_symbol void scan_complete_cb();
 __weak_symbol void connect_err_cb(int);
