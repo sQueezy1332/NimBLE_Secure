@@ -39,3 +39,7 @@
 #define CHECK_(x) ESP_ERROR_CHECK_WITHOUT_ABORT(x)
 #define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","err 0x%02x at 0x%08x", x, FUNC_ADDRESS)
 #define CHECK_VOID(x) ESP_RETURN_VOID_ON_ERROR(x,"","err 0x%02x at 0x%08x", x, FUNC_ADDRESS)
+
+#define AUTO_IO_CHR 1
+//#define SPP_CHR 2
+//#define HEART_RATE_CHR 3
