@@ -28,10 +28,10 @@ int gatt_svr_subscribe_cb(const struct ble_gap_event *event);
  */
 void gatt_svr_init(void);
 
-int need_notify_io();
+uint8_t need_notify_io();
 int clear_connection(uint16_t);
 int set_encryption(uint16_t);
-int get_encryption(uint16_t);
+int is_encrypted(uint16_t);
 void send_alarm_notify();
 void send_heart_rate_notify();
 void send_spp_notify();
