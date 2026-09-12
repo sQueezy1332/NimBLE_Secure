@@ -83,7 +83,7 @@ static const char* NVS = "NVS";
 #define PATTERN_CHR_NUM    (1)   /*!< Set the number of consecutive and identical characters received by receiver which defines a UART pattern*/
 
 using String = std::string;
-typedef struct { byte patch , ota , flag;  uint8_t crc; } sets_t;
+typedef struct { uint8_t patch , ota , flag;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
 //NIMBLE_HS_STACK_SIZE
@@ -96,8 +96,8 @@ esp_timer_handle_t h_timer_wifi;
 esp_timer_handle_t h_timer_valid;
 __unused esp_netif_t* h_netif_sta;
 __unused esp_netif_t* h_netif_ap;
-byte pass_key[32] = DEF_BLE_PASS_BASE32;
-byte scan_key[32] = DEF_BLE_SCAN_DATA;
+uint8_t pass_key[32] = DEF_BLE_PASS_BASE32;
+uint8_t scan_key[32] = DEF_BLE_SCAN_DATA;
 uint8_t pass_key_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(pass_key)); //sizeof(DEF_BLE_PASS)-1;
 uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
 
@@ -126,7 +126,7 @@ int bytes_to_str_bigend(const byte* src, char* dest, size_t data_size) { return 
 bool wifi_sta_wait_conn(); 
 void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
 void wifi_timer_start() { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
-esp_err_t wifi_timer_reset(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
+esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
 
 void nvs_read_sets();
 void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
@@ -163,7 +163,7 @@ void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_in
 
 void scan_complete_cb() { ble_scan_init(); }
 
-void connect_err_cb(int status) {};
+void connect_err_cb(int status) { adv_init();};
 
 void disconnect_cb() { adv_init(); };
 
@@ -322,7 +322,7 @@ void vApplicationIdleHook(void) {
 }*/
 
 void totp_test() {
-	byte buf[64]; char str[64];
+	uint8_t buf[64]; char str[64];
 	const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
 	DEBUG("base32_decode()\n");
 	for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); }
@@ -360,7 +360,7 @@ sets_t read_noinit() {
 	return {};
 }
 
-void write_noinit_ota(byte val) {
+void write_noinit_ota(uint8_t val) {
 	sets_noinit.ota = val;
 	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
 }
