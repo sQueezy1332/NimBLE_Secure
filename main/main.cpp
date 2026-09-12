@@ -2,14 +2,15 @@
 #include "main.h"
 
 extern "C" void app_main() {
-	const int _size = sizeof(my_ble_store_nvs);
-	static_assert(_size == 64);
+#ifdef DEBUG_ENABLE
+	delay(3000);
+#endif
+	check_img_state();
 	nvs_init(); //read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
-	pinMode(13, OUTPUT);
-	delay(2000);
+	//pinMode(13, OUTPUT);
 	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
-	printHeapInfo();
+	ESP_LOGI(TAG, "getFreeHeap() %lu", getFreeHeap());
 	esp_log_level_set("*", ESP_LOG_DEBUG);
 	esp_log_level_set("nvs", ESP_LOG_INFO);esp_log_level_set("wifi", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
@@ -29,7 +30,10 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
 //#ifdef CONFIG_FACTORY_FIRMWARE
 	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
-			if(read_noinit().ota) { wifi_init(); return; }
+			if(read_noinit().ota) { 
+				wifi_init();
+				set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(30)); 
+			}
 //#else
 #ifdef CONFIG_ADC_LINE
 	const gpio_config_t conf2 = { .pin_bit_mask = BIT(PIN_LINE), .mode = GPIO_MODE_INPUT,};
@@ -41,14 +45,7 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
 	nvs_read_sets();
 	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
-	ESP_ERROR_CHECK(nimble_port_init());
-	ble_svc_gap_init();
-	ble_hs_cfg_init();
-	gatt_svr_init();
-	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
-	set_ble_device_name();
-	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
-	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
+	bluetooth_init();
 	#if PIN_LED_MASK
 	delay(1000); dWrite(PIN_LED, 1);
 	#endif
@@ -56,32 +53,48 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 //#endif
 }
 
-static void wifi_init() {
-	ESP_LOGI(TAG, "Run factory firmware\n");
+void bluetooth_init() {
+	ESP_ERROR_CHECK(nimble_port_init());
+	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
+	set_ble_device_name();
+	ble_hs_cfg_init();
+	ble_svc_gap_init();
+	gatt_svr_init();
+	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
+	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
+}
+
+void ota_update_start_cb() {
+	ble_gap_ext_adv_stop(0);
+	ble_gap_disc_cancel();
+}
+
+void wifi_init() {
+	ESP_LOGI(TAG, "Run ota firmware\n");
 	h_timer_wifi = esp_timer_new([](void*){ 
-		ESP_LOGW(TAG,"TIMER_WIFI ms %lu",(uint32_t)(esp_timer_period(h_timer_wifi) / 1000));
+		ESP_LOGW(TAG,"TIMER_WIFI ms %lu", (uint32_t)(esp_timer_period(h_timer_wifi) / 1000));
 		ESP_LOGI(TAG, "FreeHeap %lu", getFreeHeap()); esp_restart();});
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
 	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
 #ifdef STATION_MODE
 	wifi_setup_default(WIFI_MODE_STA, WIFI_STORAGE_RAM); 
-	h_netif_sta = wifi_init_sta();
+	h_netif_sta = wifi_init_sta(STA_SSID, STA_PASS);
 #else
 	wifi_setup_default(WIFI_MODE_AP, WIFI_STORAGE_RAM); 
-	h_netif_ap = wifi_init_ap();
+	h_netif_ap = wifi_init_ap(AP_SSID, AP_PASS, 0, AP_MAX_CONN);
 #endif
 	set_wifi_hostname();
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
+#if defined DEBUG_ENABLE && defined STATION_MODE
 	//ap_set_dns_addr(h_netif_ap,h_netif_sta);
-#ifdef DEBUG_ENABLE
 	ESP_LOGI(TAG, "WiFi started, waiting for connection...");
-	if(!wifi_sta_wait_conn()) return;
+	if(wifi_sta_wait_conn() != 0) return;
 	esp_log_level_set("wifi", ESP_LOG_DEBUG);
 #endif
 }
 
-static void usb_cdc_task(void *arg) {
+void usb_cdc_task(void *arg) {
 	static const char* TAG = "CDC";
 	static uint8_t Buffer[CDC_BUF_SIZE];
 	usb_serial_jtag_driver_config_t usb_serial_jtag_config = {CDC_BUF_SIZE, CDC_BUF_SIZE};
@@ -104,10 +117,12 @@ static void usb_cdc_task(void *arg) {
     }
 }
 
-static void mainTask(void *) {
+void mainTask(void *) {
 	h_main_task = xTaskGetCurrentTaskHandle();
-//#ifdef	DEBUG_ENABLE
+#ifdef	DEBUG_ENABLE
 	printHeapInfo(); //ble_store_clear();
+	print_task_list();
+#endif
 	for(;;) {
 		switch (ulTaskNotifyTake(1,portMAX_DELAY)) { 
 		//case OTA: vTaskSuspend(ble_handle);
@@ -120,10 +135,10 @@ static void mainTask(void *) {
 		case NOTIFY_TIME: break;
 		} 
 	}
-//#endif
+
 }
 
-static void isr_handler() {
+void isr_handler() {
 	static bool prev_state = 1;
 	const bool now = dRead(PIN_LINE); 
 	if(now) { ESP_DRAM_LOGI("ISR", "1"); }
@@ -144,7 +159,7 @@ int ble_delete_all_bonds() {
 #if MYNEWT_VAL_BLE_STORE_MAX_BONDS
 	nvsApi nimble_nvs(NIMBLE_NVS_NAMESPACE, NVS_READWRITE);
 	esp_err_t ret = nvs_erase_all(nimble_nvs);
-	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %d", ret); }
+	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %02X", ret); }
 /*
 
 memset(ble_store_config_our_secs, 0, sizeof(ble_store_config_our_secs)); ble_store_config_num_our_secs = 0;
@@ -157,7 +172,6 @@ memset(ble_store_config_cccds, 0, sizeof(ble_store_config_cccds)); ble_store_con
 memset(ble_store_config_csfcs, 0, sizeof(ble_store_config_csfcs)); ble_store_config_num_csfcs = 0;
 memset(ble_store_config_rpa_recs, 0, sizeof(ble_store_config_rpa_recs)); ble_store_config_num_rpa_recs = 0;
 memset(ble_store_config_local_irks, 0, sizeof(ble_store_config_local_irks)); ble_store_config_num_local_irks = 0;
-	
 	*/
 return ret;
 #endif
@@ -171,13 +185,16 @@ void nvs_write_sets(nvsApi nvs) {
 	CHECK_(nvs_commit(nvs));
 }
 
-void nvs_read_sets() {
+void check_img_state() {
 	if (img_state() == ESP_OTA_IMG_PENDING_VERIFY) {
-		h_timer_valid = esp_timer_new([](void*){
-			ESP_LOGW(TAG, "TIMER_OTA_VALID min %lu", uint32_t(TIMER_OTA_VALID / 1000000)); 
+		h_timer_valid = esp_timer_new([](void*) {
+			ESP_LOGW(TAG, "TIMER_OTA_VALID sec %lu", uint32_t(TIMER_OTA_VALID / 1000000)); 
 			esp_restart();});
 		assert(h_timer_valid); esp_timer_start_once(h_timer_valid, TIMER_OTA_VALID);
 	}
+}
+
+void nvs_read_sets() {
 	nvsApi nvs(NVS_SPACE_SETTINGS, NVS_READWRITE);
 	auto ret = nvs_get_u32(nvs, NVS_KEY_SETS, reinterpret_cast<uint32_t*>(&sets));
 	if (ret == ESP_OK) {
@@ -252,7 +269,7 @@ void revoke_ota_rollback() {
 	esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
 }
 
-void parse_adv(const struct ble_gap_ext_disc_desc* event) {
+void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 	const auto* data = event->data, len = event->length_data;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
 		//extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
