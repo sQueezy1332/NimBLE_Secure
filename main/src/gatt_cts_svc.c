@@ -250,3 +250,5 @@ int device_time_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct bl
     }
 	return BLE_ATT_ERR_REQ_NOT_SUPPORTED;
 }
+
+
