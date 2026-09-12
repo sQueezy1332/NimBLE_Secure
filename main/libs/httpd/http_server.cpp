@@ -8,6 +8,7 @@
 //#include <sys/param.h>
 #include "esp_check.h"
 #include <memory>
+
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
 
 #define OTA_BUF_SIZE (0x1000)
@@ -22,17 +23,21 @@ httpd_handle_t http_server;
 
 extern uint8_t scan_key[32]; extern uint8_t pass_key[32];
 extern uint8_t pass_key_len, scan_key_len;
-extern int wifi_is_connected();
+extern uint32_t wifi_is_connected();
 extern size_t strtoB(const char* src, uint8_t *dest, size_t buf_len);
 extern int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size);
 extern esp_err_t wifi_timer_restart(uint32_t);
+extern void ota_update_start_cb();
 extern void revoke_ota_rollback();
 extern void set_main_partition();
+
 extern esp_err_t save_auth_data();
 extern void nvsEraseAll(const char* = nullptr);
 extern int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 extern int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
 extern std::unique_ptr<char[]> task_list(size_t* len);
+extern "C" int64_t micros();
+extern "C" void reconfigure_wdt(uint32_t timeout_ms);
 
 static esp_err_t httpd_resp_send_text(httpd_req_t *req, const char *buf, ssize_t buf_len, esp_err_t ret = 0) {
 	httpd_resp_set_status(req, ret == ESP_OK ? HTTPD_200 : HTTPD_500); 
@@ -41,6 +46,8 @@ static esp_err_t httpd_resp_send_text(httpd_req_t *req, const char *buf, ssize_t
 }
 
 static esp_err_t update_post_handler(httpd_req_t *req) {
+	ota_update_start_cb();
+	auto started = micros();
 	int ret; char buf[128]; esp_ota_handle_t _h;
 	auto send_error = [&req, &ret, &buf](const char *usr_msg) {
 		sprintf(buf, "%s 0x%X", usr_msg, ret);
@@ -48,7 +55,7 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
 	};
 	const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
 	if(!ota_partition) {
-		return send_error("!ota_partition");;
+		return send_error("!ota_partition");
 	}
 	if((ret = esp_ota_begin(ota_partition, req->content_len, &_h))) {
 		sprintf(buf, PART_FMT, "ota_begin()",
@@ -58,9 +65,13 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
 	}
 	ESP_LOGI(TAG, PART_FMT, "ota_begin()",
 			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
-	auto deleter = [](esp_ota_handle_t* p) { if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((esp_ota_handle_t)p)); } };
-	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle((esp_ota_handle_t*)_h ,deleter);
 	std::unique_ptr<char[]>ota_buf(new char[OTA_BUF_SIZE]); if(!ota_buf) return send_error("!ota_buf");
+	auto deleter = [](esp_ota_handle_t* p) { 
+		if(p) { ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort((esp_ota_handle_t)p)); }
+		reconfigure_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000);
+	};
+	std::unique_ptr<esp_ota_handle_t,decltype(deleter)> ota_handle((esp_ota_handle_t*)_h, deleter);
+	reconfigure_wdt(20'000);
 	while (1) { 
 		ret = httpd_req_recv(req, ota_buf.get(), OTA_BUF_SIZE); //internal check
 		if (ret == 0) break;
@@ -70,7 +81,8 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
 					ESP_LOGW(TAG, "Timeout");
 					continue;
 				}
-				ESP_LOGE(TAG, "Timeout"); return 0;
+				ESP_LOGE(TAG, "Timeout"); 
+				return 0;
 			}
 			return send_error("httpd_req_recv()"); // Serious Error: Abort OTA
 		}
@@ -78,17 +90,20 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
 			return send_error("esp_ota_write()");
 		}
 	}
-	ESP_LOGI(TAG, "%lu bytes recieved", req->content_len);
 	if(!(ret = esp_ota_end((esp_ota_handle_t)ota_handle.get()))) {
+		ESP_LOGD(TAG, "esp_ota_end()");
 		if(!(ret = esp_ota_set_boot_partition(ota_partition))) {
 			int len = sprintf(buf, PART_FMT, "Success! Can reboot\n",
-			 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
+			ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
+			auto timer = micros(); //pdTICKS_TO_MS(xTaskGetTickCount() - started),
+			size_t delta = (timer - started) / 1000ul;
+			len += sprintf(&buf[len],"\nThe update took %u ms\nSpeed: %u kbyte/s", delta, (size_t)req->content_len / delta);
 			(void)ota_handle.release();
 			ESP_LOGI(TAG, "%s", buf);
 			return httpd_resp_send_text(req, buf, len);
 		}
 		sprintf(buf, PART_FMT, "esp_ota_set_boot_partition()\n",
-		 ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
+		ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 		return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, buf);
 	} return send_error("esp_ota_end()");
 	return 0;
@@ -236,14 +251,6 @@ esp_err_t http_server_init(void) {
 			},
 		},
 		{
-			.uri = "/valid",
-			.method = HTTP_GET,
-			.handler = [](httpd_req_t *req) {
-				revoke_ota_rollback(); const char* str = "revoke_ota_rollback()";
-   				return httpd_resp_send_text(req, str, strlen_const(str));
-			},
-		},
-		{
 			.uri = "/nvs_erase_all",
 			.method = HTTP_GET,
 			.handler = [](httpd_req_t *req)  {
@@ -262,10 +269,10 @@ esp_err_t http_server_init(void) {
 	constexpr int handlers_num = sizeof(handlers) / sizeof(handlers[0]);
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.stack_size = 8*1024; 
-	config.task_priority = 15; 
+	config.task_priority = CONFIG_LWIP_TCPIP_TASK_PRIO -1; 
 	config.max_uri_handlers = handlers_num;
 	ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), TAG, ""); 
-	
+
 	for (size_t i = 0; i < handlers_num; i++) {
 		ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &handlers[i]), TAG, "");
 	}
