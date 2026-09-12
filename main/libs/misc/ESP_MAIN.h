@@ -38,7 +38,7 @@
 #elif ARDUINO_USB_CDC_ON_BOOT// !ARDUINO_USB_MODE -- Native USB Mode
 #pragma message "USBCDC"
 #else 
-#pragma message "UART0" //definiton in HardwareSerial.cpp
+#pragma message "UART0"
 #endif  // !ARDUINO_USB_CDC_ON_BOOT -- Serial is used from UART0
 #define DEBUG(x, ...) printf(x, ##__VA_ARGS__)
 #define DEBUGLN() printf("\n")
