@@ -8,7 +8,7 @@
 //#include <sys/param.h>
 #include "esp_check.h"
 #include <memory>
- //struct
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
 
 #define OTA_BUF_SIZE (0x1000)
 #define HTTPD_401      "401 UNAUTHORIZED"
@@ -25,7 +25,7 @@ extern uint8_t pass_key_len, scan_key_len;
 extern int wifi_is_connected();
 extern size_t strtoB(const char* src, uint8_t *dest, size_t buf_len);
 extern int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size);
-extern esp_err_t wifi_timer_reset(uint32_t);
+extern esp_err_t wifi_timer_restart(uint32_t);
 extern void revoke_ota_rollback();
 extern void set_main_partition();
 extern esp_err_t save_auth_data();
@@ -160,100 +160,115 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 }
 
 esp_err_t http_server_init(void) {
-	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-	config.stack_size = 8*1024; config.task_priority = 15; config.max_uri_handlers = 10;
-	ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), TAG, "");
-	httpd_uri_t uri = {
-		.uri = "/update",
-		.method = HTTP_GET,
-		.handler = [](httpd_req_t *req) { 
-			extern const char ota_html_start[] asm("_binary_ota_html_gz_start");
-			extern const char ota_html_end[] asm("_binary_ota_html_gz_end");
-			size_t size = ota_html_end - ota_html_start;  ESP_LOGD(TAG, "html size %lu", size);
-			httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-			return httpd_resp_send(req, ota_html_start, size);
+	httpd_uri_t handlers [] = {
+		{
+			.uri = "/update",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) { 
+				extern const char ota_html_start[] asm("_binary_ota_html_gz_start");
+				extern const char ota_html_end[] asm("_binary_ota_html_gz_end");
+				size_t size = ota_html_end - ota_html_start;  ESP_LOGD(TAG, "html size %lu", size);
+				httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+				return httpd_resp_send(req, ota_html_start, size);
+			},
+			.user_ctx = NULL,
 		},
-		.user_ctx = NULL
+		{
+			.uri = "/update/start",
+			.method = HTTP_POST,
+			.handler = update_post_handler,
+		},
+		{
+			.uri = "/config",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				extern const char config_html_start[] asm("_binary_config_html_gz_start");
+				extern const char config_html_end[] asm("_binary_config_html_gz_end");
+				const size_t size = config_html_end - config_html_start; ESP_LOGD(TAG, "html size %lu", size);
+				httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+				return httpd_resp_send(req, config_html_start, size);
+			},
+		},
+		{
+			.uri = "/config",
+			.method = HTTP_POST,
+			.handler = config_post_handler,
+		},
+		{
+			.uri = save_uri,
+			.method = HTTP_POST,
+			.handler = [](httpd_req_t *req) {
+				char buf[32]; esp_err_t ret = save_auth_data(); 
+				int len = sprintf(buf, "%s 0x%X", save_uri, ret);
+				return httpd_resp_send_text(req, buf, len, ret);
+			},
+		},
+		{
+			.uri = "/main",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				set_main_partition(); return 0;
+			},
+		},
+		{
+			.uri = "/restart",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				esp_err_t ret = wifi_timer_restart(500); constexpr char str[] = "/restart";
+   				return httpd_resp_send_text(req, str, strlen_const(str), ret);
+			},
+		},
+		{
+			.uri = "/info",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				size_t len; auto str = task_list(&len); if(!str) return -1;
+				len += sprintf(str.get() + len, "Compiled: " __TIMESTAMP__);
+				return httpd_resp_send_text(req, str.get(), len);
+			},
+		},
+		{
+			.uri = "/valid",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				revoke_ota_rollback(); const char* str = "revoke_ota_rollback()";
+   				return httpd_resp_send_text(req, str, strlen_const(str));
+			},
+		},
+		{
+			.uri = "/valid",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				revoke_ota_rollback(); const char* str = "revoke_ota_rollback()";
+   				return httpd_resp_send_text(req, str, strlen_const(str));
+			},
+		},
+		{
+			.uri = "/nvs_erase_all",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req)  {
+				nvsEraseAll(); const char* str = "/nvs_erase_all";
+				return httpd_resp_send_text(req, str, strlen_const(str));
+			},
+		},
+		/*{
+    		.uri       = "/basic_auth";
+    		.method    = HTTP_GET;
+    		.handler   = basic_auth_get_handler;
+		}*/
+		
 	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/update/start";
-	uri.method = HTTP_POST;
-	uri.handler = update_post_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/config";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req) {
-		extern const char config_html_start[] asm("_binary_config_html_gz_start");
-		extern const char config_html_end[] asm("_binary_config_html_gz_end");
-		const size_t size = config_html_end - config_html_start; ESP_LOGD(TAG, "html size %lu", size);
-		httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-		return httpd_resp_send(req, config_html_start, size);
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/config";
-	uri.method = HTTP_POST;
-	uri.handler = config_post_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = save_uri;
-	uri.method = HTTP_POST;
-	uri.handler = [](httpd_req_t *req) {
-		char buf[32]; esp_err_t ret = save_auth_data(); 
-		int len = sprintf(buf, "%s 0x%X", save_uri, ret);
-		return httpd_resp_send_text(req, buf, len, ret);
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/main";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req) {
-		set_main_partition();
-		return 0;
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/restart";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req) {
-		esp_err_t ret = wifi_timer_reset(500); constexpr char str[] = "/restart";
-   		return httpd_resp_send_text(req, str, strlen_const(str), ret);
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/info";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req) {
-		size_t len; auto str = task_list(&len); if(!str) return -1;
-		len += sprintf(str.get() + len, "Compiled: " __TIMESTAMP__);
-		return httpd_resp_send_text(req, str.get(), len);
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/valid";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req) {
-		revoke_ota_rollback(); const char* str = "revoke_ota_rollback()";
-   		return httpd_resp_send_text(req, str, strlen_const(str));
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-
-	uri.uri = "/nvs_erase_all";
-	uri.method = HTTP_GET;
-	uri.handler = [](httpd_req_t *req)  {
-		nvsEraseAll(); const char* str = "/nvs_erase_all";
-		return httpd_resp_send_text(req, str, strlen_const(str));
-	};
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-	//
-	/*
-    uri.uri       = "/basic_auth";
-    uri.method    = HTTP_GET;
-    uri.handler   = basic_auth_get_handler;
-	ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &uri), TAG, "");
-	*/
+	
+	constexpr int handlers_num = sizeof(handlers) / sizeof(handlers[0]);
+	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+	config.stack_size = 8*1024; 
+	config.task_priority = 15; 
+	config.max_uri_handlers = handlers_num;
+	ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), TAG, ""); 
+	
+	for (size_t i = 0; i < handlers_num; i++) {
+		ESP_RETURN_ON_ERROR(httpd_register_uri_handler(http_server, &handlers[i]), TAG, "");
+	}
 	return ESP_OK;
 }
 
@@ -300,18 +315,12 @@ static esp_err_t basic_auth_get_handler(httpd_req_t *req)
             httpd_resp_set_type(req, "application/json");
             httpd_resp_set_hdr(req, "Connection", "keep-alive");
             int rc = asprintf(&basic_auth_resp, "{\"authenticated\": true,\"user\": \"%s\"}", "username");
-            if (rc < 0) {
+            if ((rc < 0) || !basic_auth_resp) {
                 ESP_LOGE(TAG, "asprintf() returned: %d", rc);
                 //free(auth_credentials);
-                return ESP_FAIL;
-            }
-            if (!basic_auth_resp) {
-                ESP_LOGE(TAG, "No enough memory for basic authorization response");
-                //free(auth_credentials);
-                free(buf);
                 return ESP_ERR_NO_MEM;
             }
-            httpd_resp_send(req, basic_auth_resp, strlen(basic_auth_resp));
+            httpd_resp_send(req, basic_auth_resp, rc);
             free(basic_auth_resp);
         }
         //free(auth_credentials);
