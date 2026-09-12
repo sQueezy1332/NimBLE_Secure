@@ -6,6 +6,7 @@
 #include "esp_ota_ops.h"
 #include "esp_mac.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 
 #if CONFIG_ARDUINO_ISR_IRAM
 #define ARDUINO_ISR_ATTR IRAM_ATTR
@@ -24,23 +25,17 @@
 #define OUTPUT_OPEN_DRAIN	0x13
 #define ANALOG				0xC0
 
-FORCE_INLINE_ATTR intptr_t esp_cpu_get_call_addr(intptr_t return_address) {
-#ifdef __XTENSA__
-    return return_address - 3;
-#else
-    return return_address - 4;
-#endif
-}
 #define FUNC_ADDRESS (esp_cpu_get_call_addr((intptr_t)__builtin_return_address(0)))
 #define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","0x%08x",FUNC_ADDRESS)
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-//unsigned long ARDUINO_ISR_ATTR micros() { return esp_timer_get_time();}
-//unsigned long ARDUINO_ISR_ATTR millis() { return esp_timer_get_time() / 1000; }
-//void delay(uint32_t ms) { vTaskDelay(ms / portTICK_PERIOD_MS); }
-//void delayMicroseconds(uint32_t us) { }
+
+int64_t micros() { return esp_timer_get_time(); }
+uint32_t millis() { return esp_timer_get_time() / 1000; }
+void delay(uint32_t ms) { vTaskDelay(ms / portTICK_PERIOD_MS); }
+void delayMicroseconds(uint32_t us) { esp_rom_delay_us(us); }
 
 void pinMode(uint8_t pin, uint8_t mode) {
 	gpio_config_t conf = {
@@ -91,39 +86,61 @@ void detachInterrupt(uint8_t pin) {
 void enableInterrupt(uint8_t pin) { gpio_intr_enable((gpio_num_t)pin); }
 void disableInterrupt(uint8_t pin) { gpio_intr_disable((gpio_num_t)pin); }
 
+void reconfigure_wdt(uint32_t timeout_ms) {
+#if CONFIG_ESP_TASK_WDT_INIT
+	if (timeout_ms >= CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000) {
+		esp_task_wdt_config_t twdt_config = {
+			.timeout_ms = timeout_ms,
+			.idle_core_mask = 0,
+#if CONFIG_ESP_TASK_WDT_PANIC
+			.trigger_panic = 1,
+#endif
+			};
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0
+		twdt_config.idle_core_mask |= (1 << 0);
+#endif
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1
+		twdt_config.idle_core_mask |= (1 << 1);
+#endif
+		esp_task_wdt_reconfigure(&twdt_config);
+	}
+#endif
+}
+
 #ifdef __cplusplus
 }
 #endif
 
 
 void nvs_init() {
+	__unused const char* TAG = "NVS";
 	esp_err_t err = nvs_flash_init();
 	if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
 		const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
 		if (partition) {
 			err = esp_partition_erase_range(partition, 0, partition->size);
 			if (err == ESP_OK) { err = nvs_flash_init(); ESP_LOGI("NVS", "nvs_flash_init()"); }
-			else {ESP_LOGE("NVS", "!format ");}
-		} else { ESP_LOGE("NVS", "!finding"); }
+			else {ESP_LOGE(TAG, "!format ");}
+		} else { ESP_LOGE(TAG, "!finding"); }
 	}
-	if (err) ESP_LOGE("NVS", "NVS: %d", err);
+	if (err) ESP_LOGE(TAG, "err: %d", err);
 }
 
 #ifdef CONFIG_APP_ROLLBACK_ENABLE
 esp_ota_img_states_t img_state(bool valid) {
+	__unused const char* TAG = "img";
 	const esp_partition_t* cur_part = esp_ota_get_running_partition();
 	esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
 	esp_err_t ret = esp_ota_get_state_partition(cur_part, &ota_state);
-	if(ret) { ESP_LOGE("img", "0x%08x err 0x%X", FUNC_ADDRESS, ret); }
- 	ESP_LOGI("img", "'%s' state: %lX%s", cur_part->label, ota_state, 
+	if(ret) { ESP_LOGE(TAG, "0x%08x err 0x%X", FUNC_ADDRESS, ret); }
+ 	ESP_LOGI(TAG, "'%s' state: %lX%s", cur_part->label, ota_state, 
 		ota_state == ESP_OTA_IMG_PENDING_VERIFY ? " PENDING_VERIFY" : "");
 	if(valid && (ota_state == ESP_OTA_IMG_PENDING_VERIFY)) { 
 		ret = esp_ota_mark_app_valid_cancel_rollback(); 
-		ESP_LOGI("img", "app_valid 0x%x", ret);
+		ESP_LOGI(TAG, "app_valid 0x%x", ret);
 	}
 	return ota_state;
 }
-
 #endif
 
 esp_timer_handle_t
@@ -144,13 +161,12 @@ esp_err_t esp_timer_start(esp_timer_handle_t handle, uint64_t period) {
 	if (esp_timer_is_active(handle)) return esp_timer_restart(handle, period);
 	return esp_timer_start_once(handle, period);
 }
+
 uint64_t esp_timer_period(esp_timer_handle_t handle) {
 	uint64_t result;
 	if(!esp_timer_get_period(handle, &result)) return result;
 	return 0;
 }
-
-
 
 esp_err_t
 gptimer_alarm(gptimer_handle_t handle, uint64_t value, bool reload, uint64_t count) {
@@ -181,7 +197,9 @@ gptimer_init(uint64_t value, gptimer_alarm_cb_t func, bool reload, uint8_t prior
 		return handle;
 }
 
-esp_err_t gptimer_restart(gptimer_handle_t handle) { return gptimer_set_raw_count(handle, 0); }
+esp_err_t gptimer_restart(gptimer_handle_t handle) { 
+	return gptimer_set_raw_count(handle, 0);
+}
 
 uint64_t gptimer_read(gptimer_handle_t handle) {
 	uint64_t value;
