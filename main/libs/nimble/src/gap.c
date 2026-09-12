@@ -134,7 +134,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		if(event->ext_disc.data_status != BLE_GAP_EXT_ADV_DATA_STATUS_COMPLETE) {
 			ESP_LOGW(TAG,"data_status: %u",event->ext_disc.data_status); break; }
 		print_event_report_ext(&event->ext_disc);
-		parse_adv(&event->ext_disc);
+		parse_adv_cb(&event->ext_disc);
 		break;
 	//case BLE_GAP_EVENT_PERIODIC_SYNC: print_event_report(event->periodic_sync); break;
 	//case BLE_GAP_EVENT_PERIODIC_REPORT: print_event_report(event->periodic_report); break;
