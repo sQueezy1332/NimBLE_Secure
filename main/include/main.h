@@ -8,7 +8,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
-//#include "esp_random.h"
+#include "esp_random.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/md.h"
 #include "rom/crc.h"
@@ -119,9 +119,9 @@ void set_ble_device_name();
 int ble_delete_all_bonds();
 void set_wifi_hostname();
 //static uint32_t generate_pin(uint32_t, const char * = (char *)pass_key, byte = pass_key_len);
-size_t strtoB(const char* str, byte* buf, size_t buf_len);
-template <bool = false, char = 0> int bytes_to_str(const byte* src, char* dest, size_t data_size);
-int bytes_to_str_bigend(const byte* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
+size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
+template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);
+int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
 
 bool wifi_sta_wait_conn(); 
 void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
@@ -146,6 +146,7 @@ std::unique_ptr<char[]> task_list(size_t* len = nullptr);
 void print_task_list() { DEBUG(task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
+
 //__unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
 decltype(sets_t::crc) crc_impl(const sets_t & buf) {
@@ -160,13 +161,9 @@ void patch_func(uint64_t period) {
 }
 
 void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
-
 void scan_complete_cb() { ble_scan_init(); }
-
 void connect_err_cb(int status) { adv_init();};
-
 void disconnect_cb() { adv_init(); };
-
 void conn_encrypted_cb() { impl_io_on(); adv_init(); }
 
 void timer_patch_off_cb(void *) { 
@@ -175,9 +172,12 @@ void timer_patch_off_cb(void *) {
 	//ble_gap_terminate();
 }
 
+static uint32_t heart_rate;
+uint8_t get_heart_rate(void) { return heart_rate; }
+void update_heart_rate(void) {  heart_rate = esp_random(); /*heart_rate = 60 + (uint8_t)(esp_random() % 21); */ }
+
 void impl_io_on() { patch_func(); }
 void impl_io_off() { patch_func(TIMER_PATCH_OFF); }
-
 int impl_io_get() { return IO_GET_IMPL(); }
 
 #ifdef DEBUG_ENABLE
@@ -268,7 +268,7 @@ inline void nvs_test(const char* key = nullptr) {
 				ESP_LOGI(TAG, "Str: %s\n", (char*)buf); break;
 			case 3: 
 				ESP_LOGI(TAG, "Blob size %u: ", buf_len);
-				for (size_t i = 0; i < buf_len; i++) { DEBUGF("%02X ", ((byte*)buf)[i]); }; DEBUGLN();
+				for (size_t i = 0; i < buf_len; i++) { DEBUGF("%02X ", ((uint8_t*)buf)[i]); }; DEBUGLN();
 				break;
 			default: ESP_LOGE(TAG, "nvsGet()" " 0x%X", ret);
 			}
