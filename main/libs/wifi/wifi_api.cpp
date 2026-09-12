@@ -1,5 +1,4 @@
 #include "wifi_api.h"
-#include "credentials.h"
 
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
@@ -7,7 +6,7 @@ static const char *TAG = "wifi_init";
 static const char *TAG_AP = "SoftAP";
 static const char *TAG_STA = "STA";
 
-static uint8_t retry_num = 0;
+__unused static char retry_num = 0;
 __unused int8_t sta_count = 0;
 
 EventGroupHandle_t h_group_wifi = NULL;
@@ -66,7 +65,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 		) return; //if esp_wifi_connect called
 		xEventGroupClearBits(h_group_wifi, WIFI_STA_CONNECTED);  //reset flag
 		//201 NO_AP_FOUND //205 CONNECTION_FAIL //15 4WAY_HANDSHAKE_TIMEOUT //2 AUTH_EXPIRE
-		if (1 && (retry_num < CONN_MAXIMUM_RETRY)) {
+		if (1 && (retry_num > 0)) {
 			ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
 			retry_num++; wifi_timer_start();
 		} else {
@@ -150,40 +149,49 @@ void wifi_setup_default(wifi_mode_t mode, wifi_storage_t storage) {
 	ESP_ERROR_CHECK(esp_wifi_set_mode(mode));
 }
 #ifdef STATION_MODE
-esp_netif_t* wifi_init_sta() {
+esp_netif_t* wifi_init_sta(const char* ssid, const char* pass) {
 	esp_netif_t* esp_netif_sta = esp_netif_create_default_wifi_sta();
-	wifi_config_t wifi_config = {//[-Wmissing-field-initializers]
-		.sta = {
-			.ssid = STA_SSID,
-			.password = STA_PASS,
-			.threshold { .authmode = WIFI_AUTH_WPA_WPA2_PSK }
-		},
-	};
+	size_t ssid_len = strlen(ssid), pass_len = strlen(pass);
+		wifi_config_t wifi_config = {
+			.sta = { .threshold { .authmode = WIFI_AUTH_WPA_WPA2_PSK } },
+		};
+	if(ssid_len < sizeof(wifi_config.sta.ssid)) {
+		memcpy(wifi_config.sta.ssid, ssid, ssid_len);
+	}
+	if(pass_len <= sizeof(wifi_config.sta.password) && pass_len >= 8) {
+		memcpy(wifi_config.sta.password, pass, pass_len); 
+	}
 	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
 	wifi_bandwidths_t band = {.ghz_2g = WIFI_BW20}; 
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_bandwidths(WIFI_IF_STA, &band));
 	ESP_LOGI(TAG_STA, "%s finished.", __FUNCTION__);
 	ESP_LOGI(TAG_STA, "SSID '%s' pass '%s'", wifi_config.sta.ssid, wifi_config.sta.password);
 	return esp_netif_sta;
+    
 }
 #endif
 #ifdef ACCESS_POINT_MODE
-esp_netif_t* wifi_init_ap() {
+esp_netif_t* wifi_init_ap(const char* ssid, const char* pass, uint8_t channel, uint8_t max_conn, uint8_t hidden) {
 	esp_netif_t *esp_netif_ap = esp_netif_create_default_wifi_ap();
-	wifi_config_t wifi_ap_config = {
-		.ap = {
-			.ssid = AP_SSID,
-			.password = AP_PASS,
-			.ssid_len = strlen(AP_SSID),
-			.channel = 0,//AP_WIFI_CHANNEL,
-			.authmode = WIFI_AUTH_WPA2_PSK,
-			.max_connection = AP_MAX_CONN,
+	size_t ssid_len = strlen(ssid), pass_len = strlen(pass);
+	wifi_config_t wifi_ap_config { .ap = {
+			//.ssid_len = ssid_len,
+			.channel = channel,
+			.authmode = pass ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+			.ssid_hidden = 0,
+			.max_connection = max_conn,
 			//.pmf_cfg = { .required = false, },
-		},
-	};
+		}};
+	if(ssid_len < sizeof(wifi_ap_config.ap.ssid)) {
+		memcpy(wifi_ap_config.ap.ssid, ssid, ssid_len);
+		wifi_ap_config.ap.ssid_len = (uint8_t)ssid_len;
+	}
+	if(pass_len <= sizeof(wifi_ap_config.ap.password) && pass_len >= 8) {
+		memcpy(wifi_ap_config.ap.password, pass, pass_len); 
+	}
 	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config));
-	//esp_wifi_set_max_tx_power(84);  
-	//wifi_bandwidths_t band = {.ghz_2g = WIFI_BW20}; esp_wifi_set_bandwidths(WIFI_IF_AP, &band);
+	esp_wifi_set_max_tx_power(84);  
+	wifi_bandwidths_t band = {.ghz_2g = WIFI_BW20}; esp_wifi_set_bandwidths(WIFI_IF_AP, &band);
 	ESP_LOGI(TAG_AP, "%s finished.", __FUNCTION__);
 	ESP_LOGI(TAG_AP, "SSID '%s' pass '%s'", wifi_ap_config.ap.ssid, wifi_ap_config.ap.password);
 	ESP_LOGI(TAG_AP, "channel %u max_conn %u", wifi_ap_config.ap.channel, wifi_ap_config.ap.max_connection);
