@@ -62,11 +62,13 @@
 typedef const char cch; typedef uint8_t byte; typedef const uint8_t cbyte; 
 typedef unsigned uint; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
 
-inline void delay(uint32_t ms) { vTaskDelay(ms / portTICK_PERIOD_MS); }
-inline void delayMicroseconds(uint32_t us) { esp_rom_delay_us(us); }
 #ifdef __cplusplus
 extern "C" {
 #endif
+int64_t micros();
+uint32_t millis();
+void delay(uint32_t ms);
+void delayMicroseconds(uint32_t us);
 
 void pinMode(uint8_t pin, uint8_t mode);
 void digitalWrite(uint8_t pin, uint8_t val);
@@ -78,6 +80,7 @@ void attachInterruptArg(uint8_t pin, void (*)(void *), void *arg, int mode);
 void detachInterrupt(uint8_t pin);
 void enableInterrupt(uint8_t pin);
 void disableInterrupt(uint8_t pin);
+void reconfigure_wdt(uint32_t timeout_ms);
 
 esp_timer_handle_t 
 esp_timer_new(esp_timer_cb_t cb, esp_timer_dispatch_t type = ESP_TIMER_TASK, bool skip = 0, void* arg = NULL, const char* name = NULL);
@@ -125,10 +128,11 @@ public:
 
 #include "esp_partition.h"
 inline void partition_read() {
+	__unused const char* TAG = "partition";
 	auto i = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
 	for (;i; i = esp_partition_next(i)) {
 		const esp_partition_t* partArr = esp_partition_get(i);
-		ESP_LOGI("partition", "Label %s, size %lu, address 0x%lX", 
+		ESP_LOGI(TAG, "Label %s, size %lu, address 0x%lX", 
 			partArr->label, partArr->size, partArr->address);
 	}
 	esp_partition_iterator_release(i);
@@ -178,7 +182,7 @@ inline esp_err_t nvsGet(nvs_handle_t handle, cch* key, nvs_type_t type, void* &b
 }
 
 inline void nvs_test(const char* key = nullptr) {
-	__unused static const char* TAG = "NVS";
+	__unused const char* TAG = "NVS";
 	esp_err_t ret; void* buf = malloc(64); size_t buf_len = 0;
 	nvs_stats_t nvs_stats {}; nvs_entry_info_t entry; nvs_iterator_t it = NULL;
 	nvs_get_stats(NULL, &nvs_stats);
