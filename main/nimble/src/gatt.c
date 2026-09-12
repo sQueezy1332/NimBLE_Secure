@@ -21,7 +21,7 @@ __unused static const ble_uuid16_t CHR_SPP = BLE_UUID16_INIT(0xABF1);
 extern void gatt_cts_service_init();
 /* Private function declarations */
 static int io_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
-static int serial_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+__unused static int serial_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
 __unused static int heart_rate_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
 /* Attribute value handles */
 static uint16_t h_io_chr;
