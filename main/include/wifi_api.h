@@ -7,7 +7,7 @@
 #include "esp_mac.h"
 #include "esp_log.h"
 
-#define STATION_MODE
+//#define STATION_MODE
 #define ACCESS_POINT_MODE
 
 #define ALIGN_TO_16(size) (((size) + 15) & ~15)
@@ -31,9 +31,9 @@ extern void wifi_timer_start();
 
 void wifi_setup_default(wifi_mode_t, wifi_storage_t = WIFI_STORAGE_FLASH);
 
-esp_netif_t* wifi_init_sta();
+esp_netif_t* wifi_init_sta(const char* ssid, const char* pass);
 
-esp_netif_t* wifi_init_ap();
+esp_netif_t* wifi_init_ap(const char* ssid = CONFIG_IDF_TARGET, const char* pass = NULL, uint8_t channel = 0, uint8_t max_conn = 3, uint8_t hidden = 0);
 
 void ap_set_dns_addr(esp_netif_t *ap,esp_netif_t *sta);
 
