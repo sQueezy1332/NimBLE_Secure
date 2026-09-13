@@ -1,4 +1,3 @@
-#include "credentials.h"
 #include "main.h"
 
 extern "C" void app_main() {
@@ -24,43 +23,41 @@ extern "C" void app_main() {
 static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT);
 static_assert(!configGENERATE_RUN_TIME_STATS);
 #endif
-	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();//pinMode(PIN_RELAY, GPIO_MODE_INPUT_OUTPUT_OD);
-   	const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL };
+	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();
+   	const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL }; //LED ON on c3 super mini
 	ESP_ERROR_CHECK(gpio_config(&conf));
-	gpio_set_drive_capability((gpio_num_t)PIN_RELAY ,DRIVE_CAP_IMPL);
-//#ifdef CONFIG_FACTORY_FIRMWARE
-	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); //esp_rom_get_reset_reason()
-			if(read_noinit().ota) { 
+	gpio_set_drive_capability((gpio_num_t)PIN_RELAY, DRIVE_CAP_IMPL);
+#if true
+			if(read_noinit().ota) {
+				RELAY_2_PATCH_IMPL(); RELAY_2_PATCH_IMPL();
 				wifi_init();
-				set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(30)); 
+				set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40)); 
 			}
-//#else
-#ifdef CONFIG_ADC_LINE
-	const gpio_config_t conf2 = { .pin_bit_mask = BIT(PIN_LINE), .mode = GPIO_MODE_INPUT,};
-	ESP_ERROR_CHECK(gpio_config(&conf2));
-#else
-	gpio_pullup_en((gpio_num_t)PIN_LINE);
-	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); enableInterrupt(PIN_LINE);
 #endif
 	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
-	nvs_read_sets();
-	read_auth_data(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
+	nvs_sets_read();
+	gpio_input_enable((gpio_num_t)PIN_LINE);
+#ifndef CONFIG_ADC_LINE
+	gpio_pullup_en((gpio_num_t)PIN_LINE);
+	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); 
+	enableInterrupt(PIN_LINE);
+#endif
+	auth_data_read(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	bluetooth_init();
-	#if PIN_LED_MASK
-	delay(1000); dWrite(PIN_LED, 1);
-	#endif
+#if PIN_LED_MASK
+	delay(1000); dWrite(PIN_LED, 1); //led off (open drain)
+#endif
 	mainTask();
-//#endif
 }
 
 void bluetooth_init() {
 	ESP_ERROR_CHECK(nimble_port_init());
 	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
-	set_ble_device_name();
+	ble_device_name_set();
 	ble_hs_cfg_init();
 	ble_svc_gap_init();
 	gatt_svr_init();
-	h_nimble_task = xTaskCreateStaticPinnedToCore((TaskFunction_t)nimble_port_run,
+	h_nimble_task = xTaskCreateStaticPinnedToCore( [](void*){ nimble_port_run(); vTaskDelete(NULL); assert(0); },
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 }
 
@@ -77,13 +74,13 @@ void wifi_init() {
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
 	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
 #ifdef STATION_MODE
-	wifi_setup_default(WIFI_MODE_STA, WIFI_STORAGE_RAM); 
+	wifi_setup_default(WIFI_STORAGE_RAM);
 	h_netif_sta = wifi_init_sta(STA_SSID, STA_PASS);
 #else
-	wifi_setup_default(WIFI_MODE_AP, WIFI_STORAGE_RAM); 
+	wifi_setup_default(WIFI_MODE_AP, WIFI_STORAGE_RAM);
 	h_netif_ap = wifi_init_ap(AP_SSID, AP_PASS, 0, AP_MAX_CONN);
 #endif
-	set_wifi_hostname();
+	wifi_hostname_set();
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
 #if defined DEBUG_ENABLE && defined STATION_MODE
@@ -107,7 +104,7 @@ void usb_cdc_task(void *arg) {
 				case 'T': print_task_list(); continue;
 				case 'D': ret = ble_store_clear();
 					ESP_LOGI(TAG, "ble_store_clear %d"); continue;
-				case 'V': ESP_LOGI(TAG, "VALID"); revoke_ota_rollback();
+				case 'V': ESP_LOGI(TAG, "VALID"); ota_rollback_revoke();
 					continue;
 			}
 		}
@@ -128,23 +125,24 @@ void mainTask(void *) {
 		//case OTA: vTaskSuspend(ble_handle);
 			//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
-		//case RESTART: vTaskDelay(1); esp_restart(); break;
 		//case NOTIFY: send_alarm_notify(); break;
 		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
+		case RESTART: delay(100); esp_restart(); break;
 		case NOTIFY_ALARM: send_alarm_notify(); break;
 		case NOTIFY_TIME: break;
 		} 
 	}
-
 }
 
+
 void isr_handler() {
-	static bool prev_state = 1;
+#ifndef CONFIG_ADC_LINE
+//	static bool prev_state = 1;
 	const bool now = dRead(PIN_LINE); 
 	if(now) { ESP_DRAM_LOGI("ISR", "1"); }
 	else{ ESP_DRAM_LOGI("ISR", "0"); }
-	if(prev_state != now) {
-		prev_state = now;
+//	if(prev_state != now) {
+//		prev_state = now;
 		if(sets.patch == false) {
 			dWrite(PIN_RELAY, now);
 		}
@@ -152,8 +150,10 @@ void isr_handler() {
 #if PIN_LED_MASK
 		dWrite(PIN_LED, now);
 #endif
-	}
+//	}
+#endif
 }
+
 
 int ble_delete_all_bonds() {
 #if MYNEWT_VAL_BLE_STORE_MAX_BONDS
@@ -161,28 +161,41 @@ int ble_delete_all_bonds() {
 	esp_err_t ret = nvs_erase_all(nimble_nvs);
 	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %02X", ret); }
 /*
-
 memset(ble_store_config_our_secs, 0, sizeof(ble_store_config_our_secs)); ble_store_config_num_our_secs = 0;
 ble_store_config_our_bond_count = 0;
 //ble_store_config_peer_bond_count 0;
 memset(ble_store_config_peer_secs, 0, sizeof(ble_store_config_peer_secs)); ble_store_config_num_peer_secs = 0;
-#if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
-memset(ble_store_config_cccds, 0, sizeof(ble_store_config_cccds)); ble_store_config_num_cccds = 0;
-
-memset(ble_store_config_csfcs, 0, sizeof(ble_store_config_csfcs)); ble_store_config_num_csfcs = 0;
-memset(ble_store_config_rpa_recs, 0, sizeof(ble_store_config_rpa_recs)); ble_store_config_num_rpa_recs = 0;
 memset(ble_store_config_local_irks, 0, sizeof(ble_store_config_local_irks)); ble_store_config_num_local_irks = 0;
-	*/
+*/
 return ret;
 #endif
 return ENOTSUP;
 }
 
-void nvs_write_sets(nvsApi nvs) {
+void nvs_sets_write(nvsApi nvs) {
 	sets.crc = crc_impl(sets); 
-	ESP_LOGD("NVS","patch %u, ota %u, val %u, crc %02X", sets.patch, sets.ota, sets.flag, sets.crc);
+	ESP_LOGD(TAG,"patch %u, ota %u, val %u, crc %02X", sets.patch, sets.ota, sets.flag, sets.crc);
 	CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_SETS, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
+}
+
+void nvs_sets_read() {
+	nvsApi nvs(NVS_SPACE_SETTINGS, NVS_READWRITE);
+	auto ret = nvs_get_u32(nvs, NVS_KEY_SETS, reinterpret_cast<uint32_t*>(&sets));
+	if (ret == ESP_OK) {
+		auto crc =  crc_impl(sets);
+		if (crc == sets.crc) {
+#ifdef CONFIG_DOMOPHONE
+			if(sets.flag) { patch_fun = lock_open_close; }
+			else { patch_fun = lock_open_only; }
+#endif
+			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
+			else { RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); ESP_LOGI(TAG, "PATCH_OFF"); };
+			return;
+		} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
+	} else { CHECK_(ret); } //alarm_on(false);
+	sets = {}; 
+__unused ota: nvs_sets_write(nvs);
 }
 
 void check_img_state() {
@@ -194,45 +207,30 @@ void check_img_state() {
 	}
 }
 
-void nvs_read_sets() {
-	nvsApi nvs(NVS_SPACE_SETTINGS, NVS_READWRITE);
-	auto ret = nvs_get_u32(nvs, NVS_KEY_SETS, reinterpret_cast<uint32_t*>(&sets));
-	if (ret == ESP_OK) {
-		auto crc =  crc_impl(sets);
-		if (crc == sets.crc) {
-			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
-			else { /* timer_patch_off_cb((void*)1); */ }; //dont write
-			return;
-		} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
-	} else { CHECK_(ret); } //alarm_on(false);
-	sets = {}; 
-__unused ota: nvs_write_sets(nvs);
-}
-
-void read_auth_data() {
+void auth_data_read() {
 	nvsApi handle; size_t required_size; esp_err_t ret;
 	ret = handle.begin(NVS_SPACE_SETTINGS, NVS_READONLY); if (ret) { CHECK_(ret); return; }
 	if((ret = nvs_get_blob(handle, NVS_KEY_BLE_PASS, NULL, &required_size)) == ESP_OK) {
 		if(required_size >= 16 && required_size <= sizeof(pass_key)) {
 			if((ret = nvs_get_blob(handle, NVS_KEY_BLE_PASS, pass_key, &required_size)) == ESP_OK) {
 				pass_key_len = required_size;
-				ESP_LOGI(NVS, "pass_key %s", "readed");
+				ESP_LOGI(TAG, "pass_key %s", "readed");
 			}
 		}
-	} else { ESP_LOGW(NVS, "pass_key %s", "not readed");}
+	} else { ESP_LOGW(TAG, "pass_key %s", "not readed");}
 	if((ret = nvs_get_blob(handle, NVS_KEY_SCAN_DATA, NULL, &required_size)) == ESP_OK) {
 		if(required_size >= 8 && required_size <= sizeof(scan_key)) {
 			if((ret = nvs_get_blob(handle, NVS_KEY_SCAN_DATA, scan_key, &required_size)) == ESP_OK){
 				scan_key_len = required_size;
-				ESP_LOGI(NVS, "scan_key %s", "readed");
+				ESP_LOGI(TAG, "scan_key %s", "readed");
 			}
 		}
-	} else { ESP_LOGW(NVS, "scan_key %s", "not readed");}
+	} else { ESP_LOGW(TAG, "scan_key %s", "not readed");}
 }
 
-esp_err_t save_auth_data() {
+esp_err_t auth_data_save() {
 	int err = ESP_FAIL;
-	if (pass_key_len < 8 || scan_key_len < 8) { ESP_LOGW(NVS, "!Auth"); 
+	if (pass_key_len < 8 || scan_key_len < 8) { ESP_LOGW(TAG, "!Auth"); 
 		err = (uint8_t)pass_key_len; ((uint8_t*)&err)[1] = scan_key_len; err |= BIT31;
 		return err; 
 	}
@@ -240,11 +238,11 @@ esp_err_t save_auth_data() {
 	CHECK_RET(handle.begin(NVS_SPACE_SETTINGS, NVS_READWRITE));
 	if(pass_key_len > 0) {
 		err = nvs_set_blob(handle, NVS_KEY_BLE_PASS, pass_key, pass_key_len);
-		if(err) { ESP_LOGE(NVS, "%d", err); }
+		if(err) { ESP_LOGE(TAG, "%d", err); }
 	}
 	if(pass_key_len > 0) {
 		err = nvs_set_blob(handle, NVS_KEY_SCAN_DATA, scan_key, scan_key_len);
-		if(err) { ESP_LOGE(NVS, "%d", err); }
+		if(err) { ESP_LOGE(TAG, "%d", err); }
 	}
 	if(err == ESP_OK) 
 		return nvs_commit(handle);
@@ -263,10 +261,11 @@ void set_boot_partition(esp_partition_subtype_t type) {
 	esp_partition_iterator_release(i);
 }
 
-void revoke_ota_rollback() {
+void ota_rollback_revoke() {
+	if (h_timer_valid) {
+		esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
+	}
 	esp_ota_mark_app_valid_cancel_rollback();
-	if (!h_timer_valid) return;
-	esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
 }
 
 void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
@@ -292,7 +291,7 @@ extern "C" void host_sync_cb() {
 	ble_scan_init();//set_random_addr();
 }
 
-int parse_rx_data(const ble_gap_event* event) {
+int parse_rx_data_cb(const ble_gap_event* event) {
 	//extern ble_gap_conn_desc desc;
 	const os_mbuf* buf = event->notify_rx.om;
 	enum { 
@@ -304,7 +303,9 @@ int parse_rx_data(const ble_gap_event* event) {
 		SAVE_MAC,
 		NVS_ERASE_ALL,
 		NVS_ERASE_ALL_EXC,
-		BLE_STORE_CLEAR
+		BLE_STORE_CLEAR,
+		OPEN_ONLY,
+		OPEN_CLOSE
 	};
 	if(buf->om_len != 5)  { 
 		ESP_LOGW(TAG, "!om_len"); return BLE_HS_EMSGSIZE; 
@@ -323,7 +324,7 @@ int parse_rx_data(const ble_gap_event* event) {
 		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
 	case MAIN_KEY: write_noinit_ota(0);
 		break;
-	case VALID_KEY: revoke_ota_rollback();
+	case VALID_KEY: ota_rollback_revoke();
 		break;
 	case SAVE_MAC: return save_bonding(event->notify_rx.conn_handle);
 		break;
@@ -333,8 +334,15 @@ int parse_rx_data(const ble_gap_event* event) {
 		break;
 	case BLE_STORE_CLEAR: ble_delete_all_bonds();
 		break;
-	case OFFSET: DEBUG(task_list().get());
+	case OFFSET: DEBUG(task_list().get()); break;
+#ifdef CONFIG_DOMOPHONE
+	case OPEN_ONLY: patch_fun = lock_open_only;
+		sets.flag = 0; nvs_sets_write();
 		break;
+	case OPEN_CLOSE: patch_fun = lock_open_close;
+		sets.flag = 1; nvs_sets_write();
+		break;
+#endif	
 	default: ESP_LOGW(TAG, "os_mbuf 0x%02X", val);
 		return BLE_HS_EINVAL;
 	}
@@ -407,7 +415,7 @@ rdy:            dest[i] = result;
 	return i;
 }
 
-void set_ble_device_name() {
+void ble_device_name_set() {
 	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
 	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; static_assert(name_len >= 7);
 	char* name = const_cast<char*>(ble_svc_gap_device_name());
@@ -420,7 +428,7 @@ void set_ble_device_name() {
 	ESP_LOGI(TAG, "gap_device_name: %s len: %u", name, len);
 }
 
-void set_wifi_hostname() {
+void wifi_hostname_set() {
 	const int name_len = sizeof(WIFI_HOSTNAME) - 1;
 	char name[32] = WIFI_HOSTNAME; uint8_t mac[8];
 	name[name_len] = '-';
