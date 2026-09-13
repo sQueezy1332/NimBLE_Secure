@@ -4,7 +4,7 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
 				#define DEBUG_ENABLE
 #define _WANT_USE_LONG_TIME_T
-#include "esp_main.h"
+#include "ESP_MAIN.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
@@ -27,15 +27,15 @@
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
 				#define CONFIG_ADC_LINE
+				#define CONFIG_DOMOPHONE
+				//#define PERSIST_SETTINGS
 //#ifdef CONFIG_FACTORY_FIRMWARE
 #include "wifi_api.h"
 //#endif
 #include <memory>
-
-//#define NO_PARSE_KEY
+#include "credentials.h"
 
 static const char* TAG = "MAIN";
-static const char* NVS = "NVS";
 #define TMR "TMR"
 
 #define dWrite(x,y) digitalWrite(x, y)
@@ -47,29 +47,47 @@ static const char* NVS = "NVS";
 
 #ifdef CONFIG_ADC_LINE
 #define PIN_LINE 1
-//#define PIN_RELAY_2 2
 #define PIN_LED_MASK BIT(PIN_LED)
-#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
+//#define PIN_RELAY_2 2
 #define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_3)
-#define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 0)
+#ifdef CONFIG_DOMOPHONE
+void lock_open_only(uint8_t state) {
+	if(state) { dWrite(PIN_RELAY, 1); gpio_output_enable((gpio_num_t)PIN_RELAY); } else { gpio_output_disable((gpio_num_t)PIN_RELAY); }
+}
+void lock_open_close(uint8_t state) { dWrite(PIN_RELAY, state); gpio_output_enable((gpio_num_t)PIN_RELAY); }
+void (*patch_fun)(uint8_t) = lock_open_only;
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT)
+#define RELAY_PATCH_IMPL() (*patch_fun)(1)
+#define RELAY_UNPATCH_IMPL() (*patch_fun)(0);
+#define RELAY_DEFAULT_IMPL() RELAY_UNPATCH_IMPL()
+#define IO_GET_IMPL() dRead(PIN_RELAY)
+#undef TIMER_PATCH_OFF
+#undef TIMER_PATCH
+#define TIMER_PATCH_OFF (0)
+#define TIMER_PATCH (SEC * 3)
+#else
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
 #define RELAY_PATCH_IMPL() dWrite(PIN_RELAY, 1)
 #define RELAY_UNPATCH_IMPL() dWrite(PIN_RELAY, 0)
+#define RELAY_DEFAULT_IMPL() RELAY_UNPATCH_IMPL()
 #define IO_GET_IMPL() dRead(PIN_RELAY)
+#endif
 #else		//forteza
 #define PIN_LINE (PIN_LED)
 #define PIN_LED_MASK (0)
-#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT_OD)
 #define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_0)
-#define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 1)
+#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT_OD)
 #define RELAY_PATCH_IMPL()
 #define RELAY_UNPATCH_IMPL()
+#define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 1)
 #define IO_GET_IMPL() dRead(PIN_LINE)
 #endif
+
 #ifdef PIN_RELAY_2
 	#define RELAY_2_MASK BIT(PIN_RELAY_2)
-	#define RELAY_2_DEFAULT_IMPL() dWrite(PIN_RELAY_2, 0)
 	#define RELAY_2_PATCH_IMPL() dWrite(PIN_RELAY_2, 1)
 	#define RELAY_2_UNPATCH_IMPL() dWrite(PIN_RELAY_2, 0)
+	#define RELAY_2_DEFAULT_IMPL() RELAY_2_UNPATCH_IMPL()
 #else
 	#define RELAY_2_MASK (0)
 	#define RELAY_2_DEFAULT_IMPL()
@@ -80,20 +98,18 @@ static const char* NVS = "NVS";
 #define UART_BUF_SIZE (256)
 #define CDC_BUF_SIZE (128)
 #define UART_PORT UART_NUM_1
-#define PATTERN_CHR_NUM    (1)   /*!< Set the number of consecutive and identical characters received by receiver which defines a UART pattern*/
+#define PATTERN_CHR_NUM    (1)
 
 using String = std::string;
 typedef struct { uint8_t patch , ota , flag;  uint8_t crc; } sets_t;
 static_assert(sizeof(sets_t) == 4);
-typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME,  MAIN, RESTART, } action;
+typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME, MAIN, RESTART, } action;
 //NIMBLE_HS_STACK_SIZE
 //StackType_t xMainStack[4*1024]; StaticTask_t xMainTaskBuffer;
 StackType_t	xHostStack[1024*8]; StaticTask_t xHostTaskBuffer;
 TaskHandle_t h_main_task, h_nimble_task;
  /*sizeof(StaticTimer_t); 40 sizeof(StaticTask_t); 344*/
-esp_timer_handle_t h_timer_patch;
-esp_timer_handle_t h_timer_wifi;
-esp_timer_handle_t h_timer_valid;
+esp_timer_handle_t h_timer_patch, h_timer_wifi, h_timer_valid;
 __unused esp_netif_t* h_netif_sta;
 __unused esp_netif_t* h_netif_ap;
 uint8_t pass_key[32] = DEF_BLE_PASS_BASE32;
@@ -101,41 +117,98 @@ uint8_t scan_key[32] = DEF_BLE_SCAN_DATA;
 uint8_t pass_key_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(pass_key)); //sizeof(DEF_BLE_PASS)-1;
 uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
 
-//static const auto wifi_key = DEF_OTA_KEY;
 static uint32_t pincode;
-static sets_t sets;
+__unused static sets_t sets;
 __NOINIT_ATTR static sets_t sets_noinit;
 
+static void bluetooth_init();
 static void wifi_init();
 __unused static void mainTask(void * = NULL);
 __unused static void usb_cdc_task(void *arg);
+__unused static void IRAM_ATTR isr_handler();
 //__unused static void nimble_host_task(void *);
-extern esp_err_t http_server_init();
-//extern void set_cts_unix(time_t now);
+extern void set_cts_unix(time_t now);
 static void patch_func(uint64_t = TIMER_PATCH);
 
-__unused static void IRAM_ATTR isr_handler();
-void set_ble_device_name();
+#ifndef CONFIG_DOMOPHONE
+void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
+void wifi_timer_start() { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
+esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
+#endif
+extern esp_err_t http_server_init();
+void restart_request() { xTaskNotify(h_main_task, RESTART, eSetValueWithOverwrite); }
+void ble_device_name_set();
+void wifi_hostname_set();
 int ble_delete_all_bonds();
-void set_wifi_hostname();
 //static uint32_t generate_pin(uint32_t, const char * = (char *)pass_key, byte = pass_key_len);
 size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
 template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);
 int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
 
-bool wifi_sta_wait_conn(); 
-void wifi_timer_stop() { CHECK_(esp_timer_stop(h_timer_wifi)); }
-void wifi_timer_start() { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
-esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
+void check_img_state();
+void nvs_sets_read();
+void nvs_sets_write(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
+esp_err_t auth_data_save();
+void auth_data_read();
 
-void nvs_read_sets();
-void nvs_write_sets(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
-esp_err_t save_auth_data();
-void read_auth_data();
+inline decltype(sets_t::crc) crc_impl(const sets_t & buf) {
+	constexpr int size = sizeof(sets_t::crc), len = sizeof(sets_t) - sizeof(sets_t::crc);
+	return (size == 2) ? crc16_le(0,(uint8_t*)&buf, len) : crc8_le(0,(uint8_t*)&buf, len);
+}
+
+inline sets_t read_noinit() {
+	ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
+	if(crc_impl(sets_noinit) == sets_noinit.crc) {
+		return sets_noinit;
+	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
+	return {};
+}
+
+inline void write_noinit_ota(uint8_t val) {
+	sets_noinit.ota = val;
+	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
+}
+
+void patch_func(uint64_t period) { 
+#ifndef CONFIG_DOMOPHONE
+	if(!sets.patch) { sets.patch = true; 
+		nvs_sets_write(); 
+	}
+#endif
+	if(period) { RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); CHECK_(esp_timer_start(h_timer_patch, period)); }
+	else { RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); esp_timer_stop(h_timer_patch); }
+}
 
 void set_boot_partition(esp_partition_subtype_t);
 void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
-void revoke_ota_rollback();
+void ota_rollback_revoke();
+void set_main_partition() { write_noinit_ota(0); }
+
+void connect_err_cb(int status) { adv_init();};
+void disconnect_cb() { adv_init(); };
+void conn_encrypted_cb() { io_on_impl(); adv_init(); }
+void scan_complete_cb() { ble_scan_init(); }
+void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
+
+void io_on_impl() { patch_func(); }
+void io_off_impl() { patch_func(TIMER_PATCH_OFF); }
+int io_get_impl() { return IO_GET_IMPL(); }
+
+void timer_patch_off_cb(void *) { 
+    RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
+#ifndef CONFIG_DOMOPHONE
+    sets.patch = false;
+	nvs_sets_write();
+#endif
+}
+
+static uint32_t heart_rate;
+void update_heart_rate(void) { heart_rate = esp_random(); /*heart_rate = 60 + (uint8_t)(esp_random() % 21); */ }
+uint8_t get_heart_rate(void) { return heart_rate; }
+
+#ifndef DEBUG_ENABLE
+uint32_t get_pincode() { return pincode; }
+#endif
 
 int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
@@ -146,48 +219,9 @@ std::unique_ptr<char[]> task_list(size_t* len = nullptr);
 void print_task_list() { DEBUG(task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
-
 //__unused void print_addr(cbyte* addr) { for (byte i = 5;;i--) { DEBUGF("%02X", addr[i]); if (!i) break; DEBUG(':'); } DEBUGLN(); }
 
-decltype(sets_t::crc) crc_impl(const sets_t & buf) {
-	constexpr int size = sizeof(sets_t::crc), len = sizeof(sets_t) - sizeof(sets_t::crc);
-	return (size == 2) ? crc16_le(0,(uint8_t*)&buf, len) : crc8_le(0,(uint8_t*)&buf, len);
-}
-
-void patch_func(uint64_t period) { 
-	RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL();
-	if(!sets.patch) { sets.patch = true; nvs_write_sets(); }
-	CHECK_(esp_timer_start(h_timer_patch, period));
-}
-
-void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
-void scan_complete_cb() { ble_scan_init(); }
-void connect_err_cb(int status) { adv_init();};
-void disconnect_cb() { adv_init(); };
-void conn_encrypted_cb() { impl_io_on(); adv_init(); }
-
-void timer_patch_off_cb(void *) { 
-    RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
-    sets.patch = false; nvs_write_sets();
-	//ble_gap_terminate();
-}
-
-static uint32_t heart_rate;
-uint8_t get_heart_rate(void) { return heart_rate; }
-void update_heart_rate(void) {  heart_rate = esp_random(); /*heart_rate = 60 + (uint8_t)(esp_random() % 21); */ }
-
-void impl_io_on() { patch_func(); }
-void impl_io_off() { patch_func(TIMER_PATCH_OFF); }
-int impl_io_get() { return IO_GET_IMPL(); }
-
-#ifdef DEBUG_ENABLE
-uint32_t get_pincode() { return 111111; }
-#else
-uint32_t get_pincode() { return pincode; }
-#endif
-
 inline void nvsEraseAll(const char *except) {
-	__unused static const char* TAG = "NVS";
 	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
 	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
 	while (ret == ESP_OK) {
@@ -205,7 +239,7 @@ inline void nvsEraseAll(const char *except) {
 	nvs_release_iterator(it);
 }
 
-void uart_cb() {
+inline void uart_cb() {
 	static char buf[64];
 	int len = uart_read_bytes(UART_NUM_0, buf, sizeof(buf)-1, pdMS_TO_TICKS(0));
     if(len < 0) return;
@@ -230,7 +264,7 @@ void vApplicationIdleHook(void) {
     }
 }*/
 
-void totp_test() {
+inline void totp_test() {
 	uint8_t buf[64]; char str[64];
 	const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
 	DEBUG("base32_decode()\n");
@@ -244,34 +278,3 @@ void totp_test() {
 			str, totp, now, TOTP_TIMESTEP);
 	} 
 }
-
-bool wifi_sta_wait_conn() {
-	EventBits_t bits = xEventGroupWaitBits(h_group_wifi, WIFI_STA_GOT_IP | WIFI_FAIL_BIT, 
-		pdFALSE, pdFALSE, portMAX_DELAY);
-
-	if (bits & WIFI_STA_GOT_IP) {
-		ESP_LOGI(TAG, "Connected!");
-		return true;
-	} else if (bits & WIFI_FAIL_BIT) {
-		ESP_LOGW(TAG, "Failed to connect");
-		xEventGroupClearBits(h_group_wifi, WIFI_FAIL_BIT);
-	} else {
-		ESP_LOGW(TAG, "? event bits: 0x%X", bits);
-	}
-	return false;
-}
-
-sets_t read_noinit() {
-	ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
-	if(crc_impl(sets_noinit) == sets_noinit.crc) {
-		return sets_noinit;
-	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
-	return {};
-}
-
-void write_noinit_ota(uint8_t val) {
-	sets_noinit.ota = val;
-	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"%08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
-}
-
-void set_main_partition() { write_noinit_ota(0); }
