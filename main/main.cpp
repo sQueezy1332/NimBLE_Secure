@@ -11,8 +11,12 @@ extern "C" void app_main() {
 	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
 	ESP_LOGI(TAG, "getFreeHeap() %lu", getFreeHeap());
 	esp_log_level_set("*", ESP_LOG_DEBUG);
-	esp_log_level_set("nvs", ESP_LOG_INFO);esp_log_level_set("wifi", ESP_LOG_INFO);
-	esp_log_level_set("event", ESP_LOG_INFO);esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
+	esp_log_level_set("nvs", ESP_LOG_INFO);
+	esp_log_level_set("wifi", ESP_LOG_INFO); 
+	esp_log_level_set("efuse", ESP_LOG_INFO);
+	esp_log_level_set("event", ESP_LOG_INFO);
+	esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
+	esp_log_level_set("httpd_uri", ESP_LOG_INFO);
 	totp_test();
 	nvs_test("cal_data");
 	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
@@ -21,22 +25,20 @@ extern "C" void app_main() {
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
 #else
 static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT);
-static_assert(!configGENERATE_RUN_TIME_STATS);
+static_assert(!CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS); static_assert(!CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS);
 #endif
 	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();
    	const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL }; //LED ON on c3 super mini
 	ESP_ERROR_CHECK(gpio_config(&conf));
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY, DRIVE_CAP_IMPL);
-#if true
-			if(read_noinit().ota) {
-				RELAY_2_PATCH_IMPL(); RELAY_2_PATCH_IMPL();
-				wifi_init();
-				set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40)); 
-			}
+#ifndef CONFIG_DOMOPHONE
+	if(read_noinit().ota) { wifi_init(); }
+#else
+	wifi_init();
 #endif
 	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
 	nvs_sets_read();
-	gpio_input_enable((gpio_num_t)PIN_LINE);
+	//gpio_input_enable((gpio_num_t)PIN_LINE);
 #ifndef CONFIG_ADC_LINE
 	gpio_pullup_en((gpio_num_t)PIN_LINE);
 	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); 
@@ -52,37 +54,37 @@ static_assert(!configGENERATE_RUN_TIME_STATS);
 
 void bluetooth_init() {
 	ESP_ERROR_CHECK(nimble_port_init());
-	ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE);
+	ble_svc_gap_device_appearance_set(GENERIC_HID_TAG);
 	ble_device_name_set();
 	ble_hs_cfg_init();
 	ble_svc_gap_init();
 	gatt_svr_init();
-	h_nimble_task = xTaskCreateStaticPinnedToCore( [](void*){ nimble_port_run(); vTaskDelete(NULL); assert(0); },
+	h_nimble_task = xTaskCreateStaticPinnedToCore( [](void*){ nimble_port_run(); vTaskDelete(h_nimble_task); assert(0); },
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
-}
-
-void ota_update_start_cb() {
-	ble_gap_ext_adv_stop(0);
-	ble_gap_disc_cancel();
+	CHECK_VOID(ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK));
 }
 
 void wifi_init() {
 	ESP_LOGI(TAG, "Run ota firmware\n");
+	set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40));
+#ifndef CONFIG_DOMOPHONE
 	h_timer_wifi = esp_timer_new([](void*){ 
 		ESP_LOGW(TAG,"TIMER_WIFI ms %lu", (uint32_t)(esp_timer_period(h_timer_wifi) / 1000));
 		ESP_LOGI(TAG, "FreeHeap %lu", getFreeHeap()); esp_restart();});
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
 	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
+#endif
 #ifdef STATION_MODE
 	wifi_setup_default(WIFI_STORAGE_RAM);
 	h_netif_sta = wifi_init_sta(STA_SSID, STA_PASS);
 #else
-	wifi_setup_default(WIFI_MODE_AP, WIFI_STORAGE_RAM);
+	wifi_setup_default(WIFI_STORAGE_RAM);
 	h_netif_ap = wifi_init_ap(AP_SSID, AP_PASS, 0, AP_MAX_CONN);
 #endif
 	wifi_hostname_set();
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
+	esp_log_level_set("httpd_uri", ESP_LOG_DEBUG);
 #if defined DEBUG_ENABLE && defined STATION_MODE
 	//ap_set_dns_addr(h_netif_ap,h_netif_sta);
 	ESP_LOGI(TAG, "WiFi started, waiting for connection...");
@@ -127,7 +129,7 @@ void mainTask(void *) {
 			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
 		//case NOTIFY: send_alarm_notify(); break;
 		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
-		case RESTART: delay(100); esp_restart(); break;
+		case RESTART: ESP_LOGI(TAG, "RESTART"); delay(100); esp_restart(); break;
 		case NOTIFY_ALARM: send_alarm_notify(); break;
 		case NOTIFY_TIME: break;
 		} 
@@ -157,7 +159,7 @@ void isr_handler() {
 
 int ble_delete_all_bonds() {
 #if MYNEWT_VAL_BLE_STORE_MAX_BONDS
-	nvsApi nimble_nvs(NIMBLE_NVS_NAMESPACE, NVS_READWRITE);
+	nvsApi nimble_nvs(NVS_SPACE_NIMBLE, NVS_READWRITE);
 	esp_err_t ret = nvs_erase_all(nimble_nvs);
 	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %02X", ret); }
 /*
@@ -173,18 +175,20 @@ return ENOTSUP;
 }
 
 void nvs_sets_write(nvsApi nvs) {
-	sets.crc = crc_impl(sets); 
+	//sets.crc = crc_impl(sets); 
 	ESP_LOGD(TAG,"patch %u, ota %u, val %u, crc %02X", sets.patch, sets.ota, sets.flag, sets.crc);
+#ifndef DEBUG_ENABLE
 	CHECK_VOID(nvs_set_u32(nvs, NVS_KEY_SETS, *reinterpret_cast<uint32_t*>(&sets)));
 	CHECK_(nvs_commit(nvs));
+#endif
 }
 
 void nvs_sets_read() {
 	nvsApi nvs(NVS_SPACE_SETTINGS, NVS_READWRITE);
 	auto ret = nvs_get_u32(nvs, NVS_KEY_SETS, reinterpret_cast<uint32_t*>(&sets));
 	if (ret == ESP_OK) {
-		auto crc =  crc_impl(sets);
-		if (crc == sets.crc) {
+		//auto crc =  crc_impl(sets);
+		//if (crc == sets.crc) {
 #ifdef CONFIG_DOMOPHONE
 			if(sets.flag) { patch_fun = lock_open_close; }
 			else { patch_fun = lock_open_only; }
@@ -192,7 +196,7 @@ void nvs_sets_read() {
 			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
 			else { RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); ESP_LOGI(TAG, "PATCH_OFF"); };
 			return;
-		} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
+		//} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
 	} else { CHECK_(ret); } //alarm_on(false);
 	sets = {}; 
 __unused ota: nvs_sets_write(nvs);
@@ -269,13 +273,23 @@ void ota_rollback_revoke() {
 }
 
 void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
+#ifdef CONFIG_DOMOPHONE
+
+#endif
 	const auto* data = event->data, len = event->length_data;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
 		//extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
 		ESP_LOGW(TAG, "PASS!");
+#ifndef CONFIG_DOMOPHONE
 		RELAY_2_PATCH_IMPL();
 		ble_gap_disc_cancel();
 		adv_init();
+#else
+		RELAY_PATCH_IMPL();
+		if(!(event->props & BLE_HCI_ADV_LEGACY_MASK)) {
+			adv_init();
+		}
+#endif
 	}
 	/* if(type == COMPLETE_NAME  || type == SHORT_NAME ) {
 		if ((len - 1 == size) && !memcmp(data +1, scan_key, size)) {
@@ -285,10 +299,9 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 	} *///else if (type == UUID32_DATA && len == 9 && *(uint32_t*)(&data[++i]) == ...) { *(uint32_t*)(&data[i+=4])  }
 }
 
-extern "C" void host_sync_cb() {
-	int ret = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK);
-	CHECK_(ret);
-	ble_scan_init();//set_random_addr();
+void host_sync_cb() {
+	adv_init();
+	//ble_scan_init();//set_random_addr();
 }
 
 int parse_rx_data_cb(const ble_gap_event* event) {
@@ -320,7 +333,7 @@ int parse_rx_data_cb(const ble_gap_event* event) {
 		write_noinit_ota(1);
 		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 		ESP_LOGI(TAG, "reboot to FACTORY...");
-	case RESTART_KEY: ESP_LOGI(TAG, "RESTART"); esp_restart(); 
+	case RESTART_KEY: restart_request(); 
 		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
 	case MAIN_KEY: write_noinit_ota(0);
 		break;
@@ -351,19 +364,43 @@ int parse_rx_data_cb(const ble_gap_event* event) {
 
 std::unique_ptr<char[]> task_list(size_t* len) {
 	const size_t num = uxTaskGetNumberOfTasks(), heap = getFreeHeap();
-	const size_t buf_size = ALIGN_TO_16(((num * 40)  * (configGENERATE_RUN_TIME_STATS ? 2 : 1)));
+	const size_t buf_size = ALIGN_TO_16(((num * 40)  * (CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS ? 2 : 1)));
 	std::unique_ptr<char[]> ptr(new char[buf_size]); 
 	char* str = ptr.get(); if(!str) return ptr;//931205
 	vTaskList(str); 
 	size_t i = strlen(str);
 	i += sprintf(&str[i] , "FreeHeap: %u", heap); //i += strlen(str);
 	strcpy(&str[i],"\n\n"); i +=2;
-#if configGENERATE_RUN_TIME_STATS
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
 	vTaskGetRunTimeStats(&str[i]); i += strlen(&str[i]);
 #endif
 	ESP_LOGD(TAG,"NumberOfTasks: %u, buf_size: %u, strlen: %u", num, buf_size, i);
 	if(len) *len = i;
 	return ptr;
+}
+
+void ble_device_name_set() {
+	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
+	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; static_assert(name_len >= 7);
+	char* name = const_cast<char*>(ble_svc_gap_device_name());
+	*(name + name_len) = '-';
+	uint8_t mac[8]; CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
+	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
+	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
+	size_t len = strlen(name);
+	name[MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH] = len;
+	ESP_LOGI(TAG, "gap_device_name: %s len: %u", name, len);
+}
+
+void wifi_hostname_set() {
+	const int name_len = sizeof(WIFI_HOSTNAME) - 1;
+	char name[32] = WIFI_HOSTNAME; uint8_t mac[8];
+	name[name_len] = '-';
+	CHECK_VOID(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]);
+	esp_netif_set_hostname(h_netif_sta, name); // LWIP_LOCAL_HOSTNAME
+	const char* new_name = NULL; esp_netif_get_hostname(h_netif_sta, &new_name);
+	if(new_name) { ESP_LOGI(TAG, "hostname: %s", new_name); }
 }
 
 template <bool big_endian, char separ> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size) {
@@ -415,51 +452,22 @@ rdy:            dest[i] = result;
 	return i;
 }
 
-void ble_device_name_set() {
-	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
-	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; static_assert(name_len >= 7);
-	char* name = const_cast<char*>(ble_svc_gap_device_name());
-	*(name + name_len) = '-';
-	uint8_t mac[8]; CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
-	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
-	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
-	size_t len = strlen(name);
-	name[MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH] = len;
-	ESP_LOGI(TAG, "gap_device_name: %s len: %u", name, len);
-}
-
-void wifi_hostname_set() {
-	const int name_len = sizeof(WIFI_HOSTNAME) - 1;
-	char name[32] = WIFI_HOSTNAME; uint8_t mac[8];
-	name[name_len] = '-';
-	CHECK_VOID(esp_read_mac(mac, ESP_MAC_WIFI_STA));
-	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]);
-	esp_netif_set_hostname(h_netif_sta, name); // LWIP_LOCAL_HOSTNAME
-	const char* new_name = NULL; esp_netif_get_hostname(h_netif_sta, &new_name);
-	if(new_name) { ESP_LOGI(TAG, "hostname: %s", new_name); }
-}
-
-uint32_t generate_uuid32() {
-	//static TickType_t last_change = __INT32_MAX__; 
-	static time_t salt = __INT32_MAX__;
-	__unused TickType_t sec = xTaskGetTickCount();
+uint32_t generate_pin() {
+	static uint32_t prev_steps = __UINT32_MAX__;
+	static uint32_t pincode;
 	time_t now = time(NULL);
-	if((unsigned)now - salt >= TOTP_TIMESTEP) {
-		salt = now;
-		pincode = TOTPget(pass_key, pass_key_len, salt);
-		ESP_LOGI(TAG, "NEW PIN: %lu\tTime: %lu", pincode, salt);
+	uint32_t steps = now / TOTP_TIMESTEP;
+	//uint32_t rem = now % TOTP_TIMESTEP;
+	if(steps - prev_steps >= TOTP_TIMESTEP) {
+		prev_steps = steps;
+		pincode = HOTPget(pass_key, pass_key_len, prev_steps);
+		ESP_LOGI(TAG, "NEW PIN: %lu Time: %lu", pincode, now);
 	}
-	else { salt = now; }
-	//if(sec - last_change > pdMS_TO_TICKS(TIME_CHANGE_PIN)) {
-#if !_ESP_LOG_ENABLED(3)
-		//if(last_change != __INT32_MAX__)//{ ble_delete_all_peers(&bonded_addr); }
-		ble_gap_terminate();
+#ifndef DEBUG_ENABLE 
+	return pincode; 
+#else
+	return 111111;
 #endif
-		//last_change = sec;
-		//if(salt < 1777740000) salt = 0;
-		
-	//}
-	return salt;
 }
 
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
@@ -469,7 +477,7 @@ uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt) {
 	uint8_t* const pSalt = (uint8_t*)&salt;
 	uint8_t hash[20];  uint32_t result;
-	swap_in_place(pSalt, sizeof(salt)); //salt = ntohll(salt);
+	swap_in_place(pSalt, sizeof(salt)); salt = htonll(salt);
 	int ret = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1),key,key_len,pSalt,sizeof(salt), hash);
 	if(ret != 0) { ESP_LOGE(TAG, "HOTPget %d", ret); return 0; }
 	for (int i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
