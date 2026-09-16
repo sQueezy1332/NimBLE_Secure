@@ -6,14 +6,13 @@
 #define _WANT_USE_LONG_TIME_T
 #include "ESP_MAIN.h"
 #include "driver/gpio.h"
-#include "driver/uart.h"
+#ifdef DEBUG_ENABLE
 #include "driver/usb_serial_jtag.h"
+#endif
 #include "esp_random.h"
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/md.h"
 #include "rom/crc.h"
-//#include "nimble/nimble_port_freertos.h" 
-#include "syscfg/syscfg.h"
 #include "nimble/nimble_port.h"
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
@@ -22,7 +21,7 @@
 #include "gatt.h"
 #define HEART_RATE_PERIOD (2000 * 1000)
 //#include "led.h"
-//#include "common.h"
+
 #include "esp_mac.h"
 #include "esp_hmac.h"
 				//#define CONFIG_FACTORY_FIRMWARE
@@ -51,26 +50,22 @@ static const char* TAG = "MAIN";
 //#define PIN_RELAY_2 2
 #define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_3)
 #ifdef CONFIG_DOMOPHONE
-void lock_open_only(uint8_t state) {
-	if(state) { dWrite(PIN_RELAY, 1); gpio_output_enable((gpio_num_t)PIN_RELAY); } else { gpio_output_disable((gpio_num_t)PIN_RELAY); }
-}
 void lock_open_close(uint8_t state) { dWrite(PIN_RELAY, state); gpio_output_enable((gpio_num_t)PIN_RELAY); }
+void lock_open_only(uint8_t state) { if(state) { dWrite(PIN_RELAY, 1); gpio_output_enable((gpio_num_t)PIN_RELAY); } else { gpio_output_disable((gpio_num_t)PIN_RELAY); } }
 void (*patch_fun)(uint8_t) = lock_open_only;
 #define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT)
 #define RELAY_PATCH_IMPL() (*patch_fun)(1)
-#define RELAY_UNPATCH_IMPL() (*patch_fun)(0);
+#define RELAY_UNPATCH_IMPL() (*patch_fun)(0)
 #define RELAY_DEFAULT_IMPL() RELAY_UNPATCH_IMPL()
 #define IO_GET_IMPL() dRead(PIN_RELAY)
-#undef TIMER_PATCH_OFF
-#undef TIMER_PATCH
-#define TIMER_PATCH_OFF (0)
-#define TIMER_PATCH (SEC * 3)
+#define BLE_GAP_APPEARANCE  GENERIC_HID_TAG
 #else
 #define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
 #define RELAY_PATCH_IMPL() dWrite(PIN_RELAY, 1)
 #define RELAY_UNPATCH_IMPL() dWrite(PIN_RELAY, 0)
 #define RELAY_DEFAULT_IMPL() RELAY_UNPATCH_IMPL()
 #define IO_GET_IMPL() dRead(PIN_RELAY)
+#define BLE_GAP_APPEARANCE  MOTION_SENSOR_TAG
 #endif
 #else		//forteza
 #define PIN_LINE (PIN_LED)
@@ -81,6 +76,7 @@ void (*patch_fun)(uint8_t) = lock_open_only;
 #define RELAY_UNPATCH_IMPL()
 #define RELAY_DEFAULT_IMPL() dWrite(PIN_RELAY, 1)
 #define IO_GET_IMPL() dRead(PIN_LINE)
+#define BLE_GAP_APPEARANCE  MOTION_SENSOR_TAG
 #endif
 
 #ifdef PIN_RELAY_2
@@ -101,8 +97,9 @@ void (*patch_fun)(uint8_t) = lock_open_only;
 #define PATTERN_CHR_NUM    (1)
 
 using String = std::string;
-typedef struct { uint8_t patch , ota , flag;  uint8_t crc; } sets_t;
-static_assert(sizeof(sets_t) == 4);
+typedef struct { uint8_t patch , ota , flag;  uint8_t crc; } settings;
+typedef struct { uint8_t patch , ota; uint16_t crc; } sets_noinit;
+static_assert(sizeof(settings) == 4); static_assert(sizeof(sets_noinit) == 4);
 typedef enum : uint8_t { ok, ADV, OTA, VALID, NOTIFY_ALARM, NOTIFY_TIME, MAIN, RESTART, } action;
 //NIMBLE_HS_STACK_SIZE
 //StackType_t xMainStack[4*1024]; StaticTask_t xMainTaskBuffer;
@@ -117,9 +114,8 @@ uint8_t scan_key[32] = DEF_BLE_SCAN_DATA;
 uint8_t pass_key_len = DEF_BLE_PASS_LEN; 		static_assert(DEF_BLE_PASS_LEN <= sizeof(pass_key)); //sizeof(DEF_BLE_PASS)-1;
 uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LEN <= sizeof(scan_key));
 
-static uint32_t pincode;
-__unused static sets_t sets;
-__NOINIT_ATTR static sets_t sets_noinit;
+__unused static settings sets;
+__NOINIT_ATTR static sets_noinit noinit;
 
 static void bluetooth_init();
 static void wifi_init();
@@ -127,6 +123,7 @@ __unused static void mainTask(void * = NULL);
 __unused static void usb_cdc_task(void *arg);
 __unused static void IRAM_ATTR isr_handler();
 //__unused static void nimble_host_task(void *);
+extern void adv_init(uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS);
 extern void set_cts_unix(time_t now);
 static void patch_func(uint64_t = TIMER_PATCH);
 
@@ -137,10 +134,11 @@ esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi,
 #endif
 extern esp_err_t http_server_init();
 void restart_request() { xTaskNotify(h_main_task, RESTART, eSetValueWithOverwrite); }
+void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
 void ble_device_name_set();
 void wifi_hostname_set();
 int ble_delete_all_bonds();
-//static uint32_t generate_pin(uint32_t, const char * = (char *)pass_key, byte = pass_key_len);
+
 size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
 template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);
 int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
@@ -151,22 +149,22 @@ void nvs_sets_write(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
 esp_err_t auth_data_save();
 void auth_data_read();
 
-inline decltype(sets_t::crc) crc_impl(const sets_t & buf) {
-	constexpr int size = sizeof(sets_t::crc), len = sizeof(sets_t) - sizeof(sets_t::crc);
+inline auto crc_impl(const sets_noinit & buf) {
+	constexpr int size = sizeof(settings::crc), len = sizeof(settings) - size;
 	return (size == 2) ? crc16_le(0,(uint8_t*)&buf, len) : crc8_le(0,(uint8_t*)&buf, len);
 }
 
-inline sets_t read_noinit() {
-	ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
-	if(crc_impl(sets_noinit) == sets_noinit.crc) {
-		return sets_noinit;
-	} else { sets_noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
+inline sets_noinit read_noinit() {
+	ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&noinit));
+	if(crc_impl(noinit) == noinit.crc) {
+		return noinit;
+	} else { noinit = {}; ESP_LOGW(TAG, "!noinit crc"); };
 	return {};
 }
 
 inline void write_noinit_ota(uint8_t val) {
-	sets_noinit.ota = val;
-	sets_noinit.crc = crc_impl(sets_noinit); ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&sets_noinit));
+	noinit.ota = val;
+	noinit.crc = crc_impl(noinit); ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&noinit));
 }
 
 void patch_func(uint64_t period) { 
@@ -184,11 +182,13 @@ void set_main_part() { set_boot_partition(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 void ota_rollback_revoke();
 void set_main_partition() { write_noinit_ota(0); }
 
-void connect_err_cb(int status) { adv_init();};
-void disconnect_cb() { adv_init(); };
-void conn_encrypted_cb() { io_on_impl(); adv_init(); }
-void scan_complete_cb() { ble_scan_init(); }
-void adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
+void ble_connect_cb(int status) { adv_init(); };
+int ble_disconnect_cb(uint16_t handle) { int rc = clear_connection(handle); adv_init(); return rc; };
+int ble_conn_encrypted_cb(uint16_t handle) { int rc = set_encryption(handle); io_on_impl(); adv_init(); return rc; }
+void ble_scan_complete_cb() { //ble_scan_init(); 
+}
+void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } //ble_scan_init(); 
+}
 
 void io_on_impl() { patch_func(); }
 void io_off_impl() { patch_func(TIMER_PATCH_OFF); }
@@ -205,10 +205,6 @@ void timer_patch_off_cb(void *) {
 static uint32_t heart_rate;
 void update_heart_rate(void) { heart_rate = esp_random(); /*heart_rate = 60 + (uint8_t)(esp_random() % 21); */ }
 uint8_t get_heart_rate(void) { return heart_rate; }
-
-#ifndef DEBUG_ENABLE
-uint32_t get_pincode() { return pincode; }
-#endif
 
 int base32_decode(const char* encoded, uint8_t* result, size_t buf_len);
 int base32_encode(const uint8_t *data, size_t length, char *result, size_t encode_len);
@@ -238,7 +234,7 @@ inline void nvsEraseAll(const char *except) {
 	}
 	nvs_release_iterator(it);
 }
-
+/*
 inline void uart_cb() {
 	static char buf[64];
 	int len = uart_read_bytes(UART_NUM_0, buf, sizeof(buf)-1, pdMS_TO_TICKS(0));
@@ -251,10 +247,10 @@ inline void uart_cb() {
 	case 'D': ble_delete_all_bonds(); break;
 	//default: Serial.write(buf, len);//Serial.write('\n');break;
 	}
-	/* if(!strcmp(buf, "P")) {print_task_list();}
-	else if(!strcmp(buf, "R")) {xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite);} */
+	//if(!strcmp(buf, "P")) {print_task_list();}
+	//else if(!strcmp(buf, "R")) {xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite);}
 }
-
+*/
 /*
 void vApplicationIdleHook(void) {
     static bool prev_state = 0;
