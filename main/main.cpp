@@ -74,7 +74,7 @@ void mainTask(void *) {
 		uint32_t notify = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 		switch (*(uint8_t*)&notify) { 
 		//case OTA: vTaskSuspend(ble_handle);
-			//set_wwwwoot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
+			//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
 		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
 #ifdef CONFIG_DOMOPHONE
