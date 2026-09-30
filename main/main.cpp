@@ -1,56 +1,127 @@
 #include "main.h"
-
-extern "C" void app_main() {
+#include "tlsf_block_functions.h"
+extern "C" void app_main() { {
 #ifdef DEBUG_ENABLE
-	delay(3000);
+	led_init();
+	delay(2000);
+	DEBUG_LED(0x00FF00);
 #endif
-	check_img_state();
-	nvs_init(); //read_noinit();  //0x253D7465 == crc8 //609862 //570586
+	if (img_state_get() == ESP_OTA_IMG_PENDING_VERIFY) {
+		h_timer_img_valid = esp_timer_new([](void*) IRAM_ATTR { 
+			ESP_DRAM_LOGW("TMR", "OTA_VALID EXPIRED"); esp_restart();}, NULL, ESP_TIMER_ISR);
+		ESP_ERROR_CHECK(esp_timer_start(h_timer_img_valid, TIMER_OTA_VALID));
+	}
+	nvs_init();
+	__unused auto _noinit = read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
 	//pinMode(13, OUTPUT);
 	ESP_LOGI(TAG, "Compiled: " __TIMESTAMP__);
 	ESP_LOGI(TAG, "getFreeHeap() %lu", getFreeHeap());
 	esp_log_level_set("*", ESP_LOG_DEBUG);
 	esp_log_level_set("nvs", ESP_LOG_INFO);
-	esp_log_level_set("wifi", ESP_LOG_INFO); 
+	//esp_log_level_set("wifi", ESP_LOG_INFO); 
 	esp_log_level_set("efuse", ESP_LOG_INFO);
 	esp_log_level_set("event", ESP_LOG_INFO);
 	esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
+	esp_log_level_set("esp_netif_lwip", ESP_LOG_INFO);
 	esp_log_level_set("httpd_uri", ESP_LOG_INFO);
+	esp_log_level_set("wifi", ESP_LOG_INFO);
 	totp_test();
-	nvs_test("cal_data");
-	{uint8_t mac[8]; esp_efuse_mac_get_default(mac);ESP_LOGD(TAG, "EfuseMac() " MACSTR, MAC2STR(mac));}
-	xTaskCreate(usb_cdc_task, "cdc", 4096, nullptr, 5, nullptr);
-	vTaskPrioritySet(NULL, 15);
+	nvs_log("cal_data"); //nvsApi nvs("nvs.net80211", NVS_READWRITE); nvs_erase_all(nvs);
+	xTaskCreate(usb_cdc_task, "cdc", 4096, NULL, 5, NULL);
+	//vTaskPrioritySet(NULL, 10);
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
-#else
-static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT);
-static_assert(!CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS); static_assert(!CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS);
 #endif
-	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL();
-   	const gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL }; //LED ON on c3 super mini
+	RELAY_DEFAULT_IMPL(); RELAY_2_DEFAULT_IMPL(); 
+   	gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL }; //LED ON on c3 super mini
 	ESP_ERROR_CHECK(gpio_config(&conf));
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY, DRIVE_CAP_IMPL);
 #ifndef CONFIG_DOMOPHONE
-	if(read_noinit().ota) { wifi_init(); }
+	if(_noinit.ota) { wifi_init(); }
 #else
-	wifi_init();
+  	wifi_init(); sntp_setup();
 #endif
-	h_timer_patch = esp_timer_new(timer_patch_off_cb); assert(h_timer_patch);
-	nvs_sets_read();
+	h_timer_patch = esp_timer_new(timer_patch_off_cb, NULL, ESP_TIMER_ISR); assert(h_timer_patch);
+	nvs_sets_read(); 
 	//gpio_input_enable((gpio_num_t)PIN_LINE);
-#ifndef CONFIG_ADC_LINE
-	gpio_pullup_en((gpio_num_t)PIN_LINE);
-	attachInterrupt(PIN_LINE, isr_handler, GPIO_INTR_ANYEDGE); 
-	enableInterrupt(PIN_LINE);
+#if not defined(CONFIG_ADC_LINE)
+	#if defined(CONFIG_DOMOPHONE) && defined(DEBUG_ENABLE)
+		#pragma message "NO INTERRUPT" //coz gpio8 uses rgb led
+	#else
+		gpio_pullup_en((gpio_num_t)PIN_LINE);
+		attachInterrupt(PIN_LINE, isr_handler, LINE_INTERRUPT_MODE);
+		enableInterrupt(PIN_LINE);
+	#endif
 #endif
 	auth_data_read(); ESP_LOGD(TAG, "pass_key_len %u, scan_key_len: %u\n", pass_key_len, scan_key_len);//DEBUGLN(pass_key);
 	bluetooth_init();
 #if PIN_LED_MASK
-	delay(1000); dWrite(PIN_LED, 1); //led off (open drain)
+	delay(1000);
+	conf.pin_bit_mask = BIT(PIN_LED); conf.mode = GPIO_MODE_INPUT_OUTPUT_OD; conf.pull_up_en = GPIO_PULLUP_ENABLE;
+	gpio_config(&conf); dWrite(PIN_LED, 1); //led off (open drain)
 #endif
-	mainTask();
+	} mainTask(); 
 }
+
+void mainTask(void *) {
+	h_main_task = xTaskGetCurrentTaskHandle();
+#ifdef	DEBUG_ENABLE
+	printHeapInfo(); //ble_store_clear();
+	print_task_list();
+	DEBUG_LED(0);
+#endif
+	for(__unused int rssi = 0;;) {
+		uint32_t notify = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+		switch (*(uint8_t*)&notify) { 
+		//case OTA: vTaskSuspend(ble_handle);
+			//set_wwwwoot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
+			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
+		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
+#ifdef CONFIG_DOMOPHONE
+		case ACCESS_BLE:
+			check_distance_by_rssi();
+			break;
+		case EXIT_BUTTION: ESP_LOGI(TAG, "BUTTION");
+		 	patch_timer(TIMER_PATCH_BUTTON);
+			delay(200);
+			enableInterrupt(PIN_LINE);
+			break;
+#endif
+		case NOTIFY_IO: send_io_notify();
+		case DEBUG_LED_OFF:
+			if(DEBUG_LED_GET()) { DEBUG_LED(0x0); }
+			break;
+		case RESTART: ESP_LOGI(TAG, "RESTART"); delay(100); esp_restart(); break;
+		case NOTIFY_TIME: break;
+		default: //if(wifi_is_connected()) { if(!esp_wifi_sta_get_rssi(&rssi)) { esp_rom_printf("rssi: %d\n", rssi); } }
+			//generate_pin(); 
+			break;
+		} 
+	}
+}
+
+#ifndef CONFIG_DOMOPHONE
+void isr_handler() {
+#ifndef CONFIG_ADC_LINE
+	const auto now = dRead(PIN_LINE);
+	if(now) { ESP_DRAM_LOGD("", "1"); }
+	else { ESP_DRAM_LOGD("", "0"); }
+	if(sets.patch == false) {
+		dWrite(PIN_RELAY, now);
+	}
+	else if(need_notify_io()) { xTaskNotifyFromISR(h_main_task, NOTIFY_IO, eSetValueWithOverwrite, NULL); };
+#if PIN_LED_MASK
+	dWrite(PIN_LED, now);
+#endif
+#endif
+}
+#else
+void isr_handler() {
+	xTaskNotifyFromISR(h_main_task, EXIT_BUTTION, eSetValueWithOverwrite, NULL);
+	disableInterrupt(PIN_LINE);
+}
+#endif
+
 
 void bluetooth_init() {
 	ESP_ERROR_CHECK(nimble_port_init());
@@ -58,43 +129,49 @@ void bluetooth_init() {
 	ble_device_name_set();
 	ble_hs_cfg_init();
 	ble_svc_gap_init();
-	gatt_svr_init();
+	gatt_init();
 	h_nimble_task = xTaskCreateStaticPinnedToCore( [](void*){ nimble_port_run(); vTaskDelete(h_nimble_task); assert(0); },
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 	CHECK_VOID(ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK));
 }
 
 void wifi_init() {
-	ESP_LOGI(TAG, "Run ota firmware\n");
-	set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40));
 #ifndef CONFIG_DOMOPHONE
-	h_timer_wifi = esp_timer_new([](void*){ 
-		ESP_LOGW(TAG,"TIMER_WIFI ms %lu", (uint32_t)(esp_timer_period(h_timer_wifi) / 1000));
-		ESP_LOGI(TAG, "FreeHeap %lu", getFreeHeap()); esp_restart();});
+	h_timer_wifi = esp_timer_new([](void*) { ESP_DRAM_LOGI("TMR", "\"WIFI\" FreeHeap %lu", getFreeHeap()); esp_restart(); 
+	}, NULL, ESP_TIMER_ISR);
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
-	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
+	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));	
+	//set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40));
 #endif
 #ifdef STATION_MODE
 	wifi_setup_default(WIFI_STORAGE_RAM);
-	h_netif_sta = wifi_init_sta(STA_SSID, STA_PASS);
+	ESP_ERROR_CHECK(wifi_init_sta(STA_SSID, STA_PASS)); 
 #else
-	wifi_setup_default(WIFI_STORAGE_RAM);
-	h_netif_ap = wifi_init_ap(AP_SSID, AP_PASS, 0, AP_MAX_CONN);
+	ESP_ERROR_CHECK(wifi_init_ap(AP_SSID, AP_PASS));
 #endif
 	wifi_hostname_set();
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
-	esp_log_level_set("httpd_uri", ESP_LOG_DEBUG);
 #if defined DEBUG_ENABLE && defined STATION_MODE
 	//ap_set_dns_addr(h_netif_ap,h_netif_sta);
 	ESP_LOGI(TAG, "WiFi started, waiting for connection...");
-	if(wifi_sta_wait_conn() != 0) return;
-	esp_log_level_set("wifi", ESP_LOG_DEBUG);
+	EventBits_t bits = xEventGroupWaitBits(h_group_wifi, WIFI_STA_GOT_IP,
+		pdFALSE, pdFALSE, pdMS_TO_TICKS(15000));
+	if (bits & WIFI_STA_GOT_IP) {
+		ESP_LOGI(TAG, "Connected!");
+	} else if (bits & WIFI_STA_CONNECTED) {
+		ESP_LOGW(TAG, "No IP");
+	} else {
+		ESP_LOGW(TAG, "bits: 0x%X", bits);
+			//CHECK_(esp_wifi_disconnect());
+	}
+	//esp_log_level_set("wifi", ESP_LOG_DEBUG);
 #endif
 }
-
+#ifdef DEBUG_ENABLE
+#include "driver/usb_serial_jtag.h"
 void usb_cdc_task(void *arg) {
-	static const char* TAG = "CDC";
+	const char* TAG = "CDC";
 	static uint8_t Buffer[CDC_BUF_SIZE];
 	usb_serial_jtag_driver_config_t usb_serial_jtag_config = {CDC_BUF_SIZE, CDC_BUF_SIZE};
 	int ret = usb_serial_jtag_driver_install(&usb_serial_jtag_config);ESP_ERROR_CHECK(ret);
@@ -107,6 +184,8 @@ void usb_cdc_task(void *arg) {
 				case 'D': ret = ble_store_clear();
 					ESP_LOGI(TAG, "ble_store_clear %d"); continue;
 				case 'V': ESP_LOGI(TAG, "VALID"); ota_rollback_revoke();
+				case 'N': CHECK_(esp_wifi_disconnect());  break;
+				case 'W': CHECK_(wifi_init_ap(AP_SSID, AP_PASS)); break;
 					continue;
 			}
 		}
@@ -115,64 +194,7 @@ void usb_cdc_task(void *arg) {
 		data[len] = '\0'; ESP_LOGW(TAG, "%s", data);
     }
 }
-
-void mainTask(void *) {
-	h_main_task = xTaskGetCurrentTaskHandle();
-#ifdef	DEBUG_ENABLE
-	printHeapInfo(); //ble_store_clear();
-	print_task_list();
 #endif
-	for(;;) {
-		switch (ulTaskNotifyTake(1,portMAX_DELAY)) { 
-		//case OTA: vTaskSuspend(ble_handle);
-			//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
-			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
-		//case NOTIFY: send_alarm_notify(); break;
-		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
-		case RESTART: ESP_LOGI(TAG, "RESTART"); delay(100); esp_restart(); break;
-		case NOTIFY_ALARM: send_alarm_notify(); break;
-		case NOTIFY_TIME: break;
-		} 
-	}
-}
-
-
-void isr_handler() {
-#ifndef CONFIG_ADC_LINE
-//	static bool prev_state = 1;
-	const bool now = dRead(PIN_LINE); 
-	if(now) { ESP_DRAM_LOGI("ISR", "1"); }
-	else{ ESP_DRAM_LOGI("ISR", "0"); }
-//	if(prev_state != now) {
-//		prev_state = now;
-		if(sets.patch == false) {
-			dWrite(PIN_RELAY, now);
-		}
-		else if(need_notify_io()) { xTaskNotifyFromISR(h_main_task, NOTIFY_ALARM, eSetValueWithOverwrite, NULL); };
-#if PIN_LED_MASK
-		dWrite(PIN_LED, now);
-#endif
-//	}
-#endif
-}
-
-
-int ble_delete_all_bonds() {
-#if MYNEWT_VAL_BLE_STORE_MAX_BONDS
-	nvsApi nimble_nvs(NVS_SPACE_NIMBLE, NVS_READWRITE);
-	esp_err_t ret = nvs_erase_all(nimble_nvs);
-	if(ret) { ESP_LOGE(TAG, "!nvs_erase_all %02X", ret); }
-/*
-memset(ble_store_config_our_secs, 0, sizeof(ble_store_config_our_secs)); ble_store_config_num_our_secs = 0;
-ble_store_config_our_bond_count = 0;
-//ble_store_config_peer_bond_count 0;
-memset(ble_store_config_peer_secs, 0, sizeof(ble_store_config_peer_secs)); ble_store_config_num_peer_secs = 0;
-memset(ble_store_config_local_irks, 0, sizeof(ble_store_config_local_irks)); ble_store_config_num_local_irks = 0;
-*/
-return ret;
-#endif
-return ENOTSUP;
-}
 
 void nvs_sets_write(nvsApi nvs) {
 	//sets.crc = crc_impl(sets); 
@@ -190,10 +212,10 @@ void nvs_sets_read() {
 		//auto crc =  crc_impl(sets);
 		//if (crc == sets.crc) {
 #ifdef CONFIG_DOMOPHONE
-			if(sets.flag) { patch_fun = lock_open_close; }
-			else { patch_fun = lock_open_only; }
+			if(sets.flag) { patch_impl = lock_open_close; }
+			else { patch_impl = lock_open_only; }
 #endif
-			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_func();  }
+			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_timer();  }
 			else { RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); ESP_LOGI(TAG, "PATCH_OFF"); };
 			return;
 		//} else { ESP_LOGW(TAG, "crc %u sets.crc %u", crc, sets.crc); };
@@ -202,13 +224,23 @@ void nvs_sets_read() {
 __unused ota: nvs_sets_write(nvs);
 }
 
-void check_img_state() {
-	if (img_state() == ESP_OTA_IMG_PENDING_VERIFY) {
-		h_timer_valid = esp_timer_new([](void*) {
-			ESP_LOGW(TAG, "TIMER_OTA_VALID sec %lu", uint32_t(TIMER_OTA_VALID / 1000000)); 
-			esp_restart();});
-		assert(h_timer_valid); esp_timer_start_once(h_timer_valid, TIMER_OTA_VALID);
-	}
+sets_noinit read_noinit() {
+	ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&noinit));
+	if(crc_impl(noinit) == noinit.crc) {
+		return noinit;
+	} else { noinit = {
+#ifdef CONFIG_DOMOPHONE
+		noinit.rssi = MIN_RSSI_PATCH_DEFAULT
+#endif
+	}; noinit.crc = crc_impl(noinit);
+	ESP_LOGW(TAG, "!noinit crc");
+};
+	return noinit;
+}
+
+void write_noinit_ota(uint8_t val) {
+	noinit.ota = val;
+	noinit.crc = crc_impl(noinit); ESP_LOGD(TAG,"sets_noinit: %08X", *reinterpret_cast<uint32_t*>(&noinit));
 }
 
 void auth_data_read() {
@@ -266,19 +298,18 @@ void set_boot_partition(esp_partition_subtype_t type) {
 }
 
 void ota_rollback_revoke() {
-	if (h_timer_valid) {
-		esp_timer_stop(h_timer_valid); esp_timer_delete(h_timer_valid); h_timer_valid = NULL;
+	if(h_timer_img_valid) {
+		esp_timer_stop(h_timer_img_valid);
+		ESP_ERROR_CHECK(esp_timer_delete(h_timer_img_valid));
+		h_timer_img_valid = NULL;
 	}
 	esp_ota_mark_app_valid_cancel_rollback();
 }
 
 void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
-#ifdef CONFIG_DOMOPHONE
-
-#endif
-	const auto* data = event->data, len = event->length_data;
+#ifndef CONFIG_DOMOPHONE
+	const uint8_t *data = event->data, len = event->length_data;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
-		//extern int RSSI;NIMLOG("\nRSSI:\t\t%i\n", RSSI);
 		ESP_LOGW(TAG, "PASS!");
 #ifndef CONFIG_DOMOPHONE
 		RELAY_2_PATCH_IMPL();
@@ -297,6 +328,7 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 			ble_gap_disc_cancel(); adv_init();
 		}
 	} *///else if (type == UUID32_DATA && len == 9 && *(uint32_t*)(&data[++i]) == ...) { *(uint32_t*)(&data[i+=4])  }
+#endif
 }
 
 void host_sync_cb() {
@@ -304,27 +336,28 @@ void host_sync_cb() {
 	//ble_scan_init();//set_random_addr();
 }
 
-int parse_rx_data_cb(const ble_gap_event* event) {
-	//extern ble_gap_conn_desc desc;
-	const os_mbuf* buf = event->notify_rx.om;
+int parse_rx_data_cb(const struct ble_gap_event* event) {
+	const auto *notify = &event->notify_rx;
+	const os_mbuf* buf = notify->om;
 	enum { 
 		OFFSET = DEF_CMD_OFFSET,
 		OTA_KEY,
 		MAIN_KEY,
 		RESTART_KEY,
 		VALID_KEY,
-		SAVE_MAC,
+		SAVE_BOND,
 		NVS_ERASE_ALL,
 		NVS_ERASE_ALL_EXC,
 		BLE_STORE_CLEAR,
 		OPEN_ONLY,
-		OPEN_CLOSE
+		OPEN_CLOSE,
+		RSSI_THERSHOLD
 	};
-	if(buf->om_len != 5)  { 
+	if(buf->om_len > 6)  { 
 		ESP_LOGW(TAG, "!om_len"); return BLE_HS_EMSGSIZE; 
 	}
 	if(*reinterpret_cast<uint32_t*>(buf->om_data) != DEF_CMD_PASS) { 
-		ESP_LOGW(TAG, "!pass"); return BLE_HS_EAUTHEN; 
+		ESP_LOGW(TAG, "!pass"); return BLE_HS_EAUTHOR; 
 	}
 	//auto val = *reinterpret_cast<decltype(wifi_key)*>(buf->om_data);
 	uint8_t val = buf->om_data[4];
@@ -333,13 +366,13 @@ int parse_rx_data_cb(const ble_gap_event* event) {
 		write_noinit_ota(1);
 		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
 		ESP_LOGI(TAG, "reboot to FACTORY...");
-	case RESTART_KEY: restart_request(); 
-		break;//xTaskNotify(main_handle, RESTART, eSetValueWithOverwrite); break;
+	case RESTART_KEY: esp_restart();
+		break;
 	case MAIN_KEY: write_noinit_ota(0);
 		break;
 	case VALID_KEY: ota_rollback_revoke();
 		break;
-	case SAVE_MAC: return save_bonding(event->notify_rx.conn_handle);
+	case SAVE_BOND: return save_bonding(event->notify_rx.conn_handle);
 		break;
 	case NVS_ERASE_ALL: nvsEraseAll(nullptr);
 		break;
@@ -347,13 +380,18 @@ int parse_rx_data_cb(const ble_gap_event* event) {
 		break;
 	case BLE_STORE_CLEAR: ble_delete_all_bonds();
 		break;
-	case OFFSET: DEBUG(task_list().get()); break;
+	case OFFSET: print_task_list(); break;
 #ifdef CONFIG_DOMOPHONE
-	case OPEN_ONLY: patch_fun = lock_open_only;
+	case OPEN_ONLY: patch_impl = lock_open_only;
 		sets.flag = 0; nvs_sets_write();
 		break;
-	case OPEN_CLOSE: patch_fun = lock_open_close;
+	case OPEN_CLOSE: patch_impl = lock_open_close;
 		sets.flag = 1; nvs_sets_write();
+		break;
+	case RSSI_THERSHOLD:
+		val = buf->om_data[5];
+		if((int8_t)val > -30) return BLE_HS_EBADDATA;
+		noinit.rssi = val; noinit.crc = crc_impl();
 		break;
 #endif	
 	default: ESP_LOGW(TAG, "os_mbuf 0x%02X", val);
@@ -362,19 +400,121 @@ int parse_rx_data_cb(const ble_gap_event* event) {
 	return 0;
 }
 
+void patch_timer(uint64_t period) { 
+#ifndef CONFIG_DOMOPHONE
+	if(!sets.patch) { sets.patch = true; 
+		nvs_sets_write(); 
+	}
+#endif
+	if(period) { 
+		RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); 
+		CHECK_VOID(esp_timer_start(h_timer_patch, period));
+		DEBUG_LED(0x00'00'FF);
+	}
+	else { 
+		RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); 
+		esp_timer_stop(h_timer_patch); 
+		DEBUG_LED(0); 
+	}
+	if(need_notify_io()) { send_io_notify(); }
+}
+
+void timer_patch_off_cb(void *) {
+    RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
+#ifndef CONFIG_DOMOPHONE
+    sets.patch = false;
+	nvs_sets_write();
+#endif
+	if(need_notify_io()) {
+		xTaskNotifyFromISR(h_main_task, NOTIFY_IO, eSetValueWithoutOverwrite, NULL);
+	}
+#ifdef DEBUG_ENABLE
+	else { xTaskNotifyFromISR(h_main_task, DEBUG_LED_OFF, eSetValueWithoutOverwrite, NULL); }
+#endif
+}
+
+int ble_delete_all_bonds() {
+#if MYNEWT_VAL_BLE_STORE_MAX_BONDS
+	nvsApi nimble_nvs(NVS_SPACE_NIMBLE, NVS_READWRITE);
+	CHECK_RET(nvs_erase_all(nimble_nvs));
+	return 0;
+#endif
+return ENOTSUP;
+}
+
+void check_distance_by_rssi() {
+	extern uint16_t MAX_HANDLE; 
+	if (tracked_conn_mask & get_conn_encrypted()) {
+		int8_t rssi, target_rssi = noinit.rssi;
+		for (uint16_t h = MIN_HANDLE_VAL; h < MAX_HANDLE; h++) {
+			if (handle_read(tracked_conn_mask, h)) {
+				int ret = ble_gap_conn_rssi(h, &rssi);
+				if (unlikely(ret)) { 
+					ESP_LOGW(TAG, "ret %d handle %u", ret, h);
+					handle_write(tracked_conn_mask, h, 0);
+				} else if (rssi >= target_rssi) {
+					patch_timer();
+					ESP_LOGI(TAG, "RSSI %i, handle %u", rssi, h);
+					handle_write(tracked_conn_mask, h, 0);
+				} else { ESP_LOGD(TAG, "RSSI %i, handle %u", rssi, h); }
+			}
+		}
+	} else { 
+		ESP_LOGD(TAG, "tracked_conn 0x%X & conn_enc 0x%X" , tracked_conn_mask, get_conn_encrypted());  
+		tracked_conn_mask = 0; 
+	}
+	if(!tracked_conn_mask) { esp_timer_stop(h_timer_rssi);} 
+	else { /*ESP_LOGI(TAG, "tracked_conn_mask %u", tracked_conn_mask);*/ }
+}
+
+int ble_conn_encrypted_cb(uint16_t handle) { 
+	int ret = set_encryption(handle); 
+#ifdef CONFIG_DOMOPHONE
+	int8_t rssi;
+	CHECK_GOTO(ble_gap_conn_rssi(handle, &rssi), exit); 
+	if (rssi >= noinit.rssi) {
+		ESP_LOGI(TAG, "RSSI %i, handle %u", rssi, handle);
+		patch_timer();
+	} else {
+		ESP_LOGW(TAG, "RSSI %i, handle %u", rssi, handle);
+		handle_write(tracked_conn_mask, handle, 1);
+		if(!h_timer_rssi) { h_timer_rssi = esp_timer_new([](void*) IRAM_ATTR { 
+				xTaskNotifyFromISR(h_main_task, ACCESS_BLE, eSetValueWithoutOverwrite, NULL);} , 
+				NULL, ESP_TIMER_ISR);
+		}
+		esp_timer_start_periodic(h_timer_rssi, TIMER_CHECK_RSSI);
+	}
+#else
+	patch_timer();
+#endif
+__unused exit:
+	adv_init(); 
+	return ret;
+}
+
 std::unique_ptr<char[]> task_list(size_t* len) {
-	const size_t num = uxTaskGetNumberOfTasks(), heap = getFreeHeap();
-	const size_t buf_size = ALIGN_TO_16(((num * 40)  * (CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS ? 2 : 1)));
+	const size_t num = uxTaskGetNumberOfTasks(); //heap = getFreeHeap();
+	const size_t buf_size = ALIGN_TO_16(((num * 32)  * (configGENERATE_RUN_TIME_STATS ? 2 : 1)) + 128);
 	std::unique_ptr<char[]> ptr(new char[buf_size]); 
 	char* str = ptr.get(); if(!str) return ptr;//931205
 	vTaskList(str); 
 	size_t i = strlen(str);
-	i += sprintf(&str[i] , "FreeHeap: %u", heap); //i += strlen(str);
-	strcpy(&str[i],"\n\n"); i +=2;
-#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-	vTaskGetRunTimeStats(&str[i]); i += strlen(&str[i]);
+	strcpy(&str[i],"\n\n"); i += 2;
+#if configGENERATE_RUN_TIME_STATS
+	vTaskGetRunTimeStats(&str[i]); 
+	i += strlen(&str[i]); 
+	strcpy(&str[i],"\n"); i += 1;
 #endif
-	ESP_LOGD(TAG,"NumberOfTasks: %u, buf_size: %u, strlen: %u", num, buf_size, i);
+	i += sprintf(&str[i] , "Heap: ");
+	i += heap_caps_sprint_heap_info(&str[i]);
+	uint64_t seconds = micros() / 1000000;
+    size_t days = seconds / (60*60*24);
+   	size_t rem = seconds % (60*60*24);
+    size_t hours = rem / (60*60);
+	size_t mins = rem % (60*60) / 60;
+	i += sprintf(&str[i] , "Uptime: %ud %uh %um\n", days, hours, mins);
+	i += sprintf(&str[i], "Compiled: " __TIMESTAMP__ "\n");
+	ESP_LOGD(TAG,"\nNumberOfTasks: %u, buf_size: %u, strlen: %u", num, buf_size, i);
 	if(len) *len = i;
 	return ptr;
 }
@@ -389,7 +529,7 @@ void ble_device_name_set() {
 	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
 	size_t len = strlen(name);
 	name[MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH] = len;
-	ESP_LOGI(TAG, "gap_device_name: %s len: %u", name, len);
+	ESP_LOGI(TAG, "gap_device_name: %.*s len: %u", len, name, len);
 }
 
 void wifi_hostname_set() {
@@ -451,16 +591,31 @@ rdy:            dest[i] = result;
 	} //
 	return i;
 }
+#ifdef CONFIG_DOMOPHONE
+#include "esp_sntp.h"
+#include "services/cts/ble_svc_cts.h"
+extern "C" void set_cts_noinit_vals(time_t val, uint8_t reason);
+void sntp_setup() {
+	esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+  	sntp_set_time_sync_notification_cb([](struct timeval *tv) {
+		set_cts_noinit_vals(tv->tv_sec, EXTERNAL_REFERENCE_TIME_UPDATE_MASK);
+		ESP_LOGI(TAG, "sntp update sec: %lu", tv->tv_sec);
+	});
+  	esp_sntp_setservername(0, "pool.ntp.org");
+  	esp_sntp_setservername(1, "time.nist.gov");
+	esp_sntp_setservername(2, "0.ru.pool.ntp.org");
+  	esp_sntp_init();
+}
+#endif
 
 uint32_t generate_pin() {
-	static uint32_t prev_steps = __UINT32_MAX__;
+	static uint32_t prev_time = __UINT32_MAX__;
 	static uint32_t pincode;
 	time_t now = time(NULL);
-	uint32_t steps = now / TOTP_TIMESTEP;
 	//uint32_t rem = now % TOTP_TIMESTEP;
-	if(steps - prev_steps >= TOTP_TIMESTEP) {
-		prev_steps = steps;
-		pincode = HOTPget(pass_key, pass_key_len, prev_steps);
+	if(now - prev_time >= TOTP_TIMESTEP) {
+		prev_time = now;
+		pincode = TOTPget(pass_key, pass_key_len, now);
 		ESP_LOGI(TAG, "NEW PIN: %lu Time: %lu", pincode, now);
 	}
 #ifndef DEBUG_ENABLE 
@@ -468,6 +623,7 @@ uint32_t generate_pin() {
 #else
 	return 111111;
 #endif
+
 }
 
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
@@ -475,12 +631,12 @@ uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time) {
 }
 
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt) {
-	uint8_t* const pSalt = (uint8_t*)&salt;
+	uint8_t* pSalt = (uint8_t*)&salt;
 	uint8_t hash[20];  uint32_t result;
-	swap_in_place(pSalt, sizeof(salt)); salt = htonll(salt);
-	int ret = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1),key,key_len,pSalt,sizeof(salt), hash);
-	if(ret != 0) { ESP_LOGE(TAG, "HOTPget %d", ret); return 0; }
-	for (int i = 0, offset = hash[19] & 0xF; i < 4; ++i) {
+	swap_in_place(pSalt, sizeof(salt)); //salt = htonll(salt);
+	int i = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1),key,key_len,pSalt,sizeof(salt), hash);
+	if(i != 0) { ESP_LOGE(TAG, "HOTPget %d", i); return 0; }
+	for (size_t offset = hash[19] & 0xF; i < 4; ++i) {
 		((uint8_t*)&result)[3 - i] = hash[offset + i];
 	}
 	result = (result & 0x7FFFFFFF) % 1000000;
@@ -556,4 +712,22 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 		}
 		if (count < encode_len) { result[count] = '\0'; }
 	return count;
+}
+
+void nvsEraseAll(const char *except) {
+	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
+	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
+	while (ret == ESP_OK) {
+		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
+		ESP_LOGI(TAG, "space '%s'\tkey '%s'\ttype '%d'\n", entry.namespace_name, entry.key, entry.type);
+		nvsApi nvs; //types: blob 66, str 33
+		if(nvs.begin(entry.namespace_name, NVS_READWRITE) == ESP_OK) {
+			//if(*reinterpret_cast<uint32_t*>(entry.namespace_name) != *reinterpret_cast<const uint32_t*>("phy"))
+			if(except && !strcmp(entry.namespace_name, except)) continue;
+			nvs_erase_all(nvs);
+			nvs_commit(nvs);
+		}
+		ret = nvs_entry_next(&it);
+	}
+	nvs_release_iterator(it);
 }

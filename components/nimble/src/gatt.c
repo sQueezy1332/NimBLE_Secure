@@ -1,11 +1,14 @@
 //#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "common.h"
-#include "gatt.h"
 #include "host/ble_gatt.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "gatt.h"
+#pragma GCC diagnostic ignored "-Wunused-function"
+
 #define AUTO_IO_CHR 1
 //#define SPP_CHR 2
 //#define HEART_RATE_CHR 3
+
 static const char* TAG = "GATT";
 /* HEART_RATE Service */
 __unused static const ble_uuid16_t SVC_HEART = BLE_UUID16_INIT(0x180D);
@@ -17,28 +20,31 @@ static const ble_uuid128_t CHR_AUTO_IO = BLE_UUID128_INIT(0x23, 0xd1, 0xbc, 0xea
 __unused static const ble_uuid16_t SVC_SPP = BLE_UUID16_INIT(0xABF0);
 __unused static const ble_uuid16_t CHR_SPP = BLE_UUID16_INIT(0xABF1);
 
+//__weak_symbol void io_on_cb() {}
+//__weak_symbol void io_off_cb() {}
+//__weak_symbol int io_get_cb() { return 0; }
+//__weak_symbol uint8_t get_heart_rate() { return 0; }
+
 //#include "heart_rate.h"
 extern void gatt_cts_service_init();
+extern void gatt_hid_service_init();
 /* Private function declarations */
 static int io_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
-__unused static int serial_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
-__unused static int heart_rate_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+static int serial_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
+static int heart_rate_chr_access(uint16_t, uint16_t, struct ble_gatt_access_ctxt *, void *);
 /* Attribute value handles */
 static uint16_t h_io_chr;
 static uint16_t h_spp_chr;
 __unused static uint16_t h_heart_chr;
 
-typedef uint8_t subs_t;
-static subs_t subs_io, subs_spp, __unused subs_heart;
-static subs_t conn_encrypted;
+static handle_mask_t subs_io, __unused subs_spp, __unused subs_heart;
+static handle_mask_t conn_encrypted;
 
-static_assert(CONFIG_BT_NIMBLE_MAX_CONNECTIONS <= sizeof(subs_t) * 8 -2); 
-static_assert(MYNEWT_VAL_BLE_STORE_MAX_BONDS <= sizeof(subs_t) * 8 -2);
-static const size_t max_conns = 2 + CONFIG_BT_NIMBLE_MAX_CONNECTIONS;
-
+const uint16_t MAX_HANDLE = sizeof(handle_mask_t) * 8; //2 + MYNEWT_VAL_BLE_MAX_CONNECTIONS;
+static_assert(1 + MYNEWT_VAL_BLE_MAX_CONNECTIONS < sizeof(handle_mask_t) * 8);
 
 /* TAG services table */
-const struct ble_gatt_svc_def gatt_svr_svcs [] = {
+static const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 #ifdef AUTO_IO_CHR
 	{	// Automation IO service
 		.type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -47,7 +53,9 @@ const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 		{	// LED characteristic
 			.uuid = &CHR_AUTO_IO.u,
 			.access_cb = io_chr_access,
-			.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
+			.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN
+			| BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_AUTHEN
+			 | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN,
 			.val_handle = &h_io_chr,
 		}, {  }
 		},
@@ -80,14 +88,15 @@ const struct ble_gatt_svc_def gatt_svr_svcs [] = {
 		}, {  }
 		}
 	},
-#endif
+#endif	
 	{ /* No more services. */},
 };
-
 /* Private functions */
+
+#ifdef HEART_RATE_CHR
 static int heart_rate_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-	static const char *TAG = "HEART";
-	if (attr_handle != h_heart_chr) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+	const char *TAG = "HEART";
+	//if (attr_handle != h_heart_chr) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
 	/* Note: Heart rate characteristic is read only */
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR: {
@@ -100,18 +109,19 @@ static int heart_rate_chr_access(uint16_t conn_handle, uint16_t attr_handle, str
 	}
 	return BLE_ATT_ERR_UNLIKELY;
 }
-
+#endif
+#ifdef AUTO_IO_CHR
 static int io_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-	static const char *TAG = "IO";
-	if (attr_handle != h_io_chr) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+	const char *TAG = "IO";
+	//if (attr_handle != h_io_chr) { ESP_LOGW(TAG, "attr_handle %u",attr_handle); return BLE_ATT_ERR_UNLIKELY; }
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_WRITE_CHR: /* WRITE characteristic event */
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "write",conn_handle, attr_handle);
 		}  
 		if (ctxt->om->om_len == 1) { 
-			if (ctxt->om->om_data[0]) { impl_io_on(); } 
-			else { impl_io_off();}
+			if (ctxt->om->om_data[0]) { io_on_cb(); } 
+			else { io_off_cb();}
 			ESP_LOGI(TAG, "%u", ctxt->om->om_data[0]);
 			return 0;
 		} else { ESP_LOGW(TAG, "om_len %u",ctxt->om->om_len);}
@@ -120,7 +130,7 @@ static int io_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
 			ESP_LOGI(TAG, "chr %s conn_handle %u attr_handle %u", "read", conn_handle, attr_handle);
 		}
-		CHECK_RET(os_mbuf_append(ctxt->om, &(uint8_t [1]) { impl_io_get() }, 1));
+		CHECK_RET(os_mbuf_append(ctxt->om, &(uint8_t [1]) { io_get_cb() }, 1));
 		return 0; 
 		}
 	break;
@@ -128,12 +138,14 @@ static int io_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_
 	}
 	return BLE_ATT_ERR_UNLIKELY;
 }
+#endif
+#ifdef SPP_CHR
 /*
 static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	extern char* get_serial_buf();  extern uint8_t get_serial_len();
-	static const char *TAG = "SPP";
+	const char *TAG = "SPP";
 	static char spp_buf[64] = {};
-	if (attr_handle != h_spp_chr) { ESP_LOGW(TAG, "attr_handle %u", attr_handle); return BLE_ATT_ERR_UNLIKELY; }
+	//if (attr_handle != h_spp_chr) { ESP_LOGW(TAG, "attr_handle %u", attr_handle); return BLE_ATT_ERR_UNLIKELY; }
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_WRITE_CHR: {  WRITE characteristic event
 		if(conn_handle != BLE_HS_CONN_HANDLE_NONE) {
@@ -154,90 +166,89 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 	}
 	return BLE_ATT_ERR_UNLIKELY;
 }*/
+#endif
 /* Public functions */
 
-void gatt_svr_init(void) {
-	ble_svc_gatt_init();
-	CHECK_VOID(ble_gatts_count_cfg(gatt_svr_svcs)); 
-	CHECK_VOID(ble_gatts_add_svcs(gatt_svr_svcs));
-	gatt_cts_service_init(); //ble_svc_cts_time_updated();
-}
-
-uint8_t need_notify_io() { return subs_io; }
-
 int clear_connection(uint16_t h_conn) {
-	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
 #ifdef AUTO_IO_CHR
-	bitClear(subs_io, h_conn);
+	handle_write(subs_io, h_conn, 0);
 #endif
 #ifdef SPP_CHR
-	bitClear(subs_spp, h_conn);
+	handle_write(subs_spp, h_conn, 0);
 #endif
 #ifdef HEART_RATE_CHR
-	bitClear(subs_heart, h_conn);
+	handle_write(subs_heart, h_conn, 0);
 #endif
+	handle_write(conn_encrypted, h_conn, 0);
 	return 0;
 }
 
 int set_encryption(uint16_t h_conn) {
-	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	bitSet(conn_encrypted, h_conn); return 0;
+	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+	handle_write(conn_encrypted, h_conn, 1); return 0;
 }
 
 int is_encrypted(uint16_t h_conn) {
-	if (h_conn > max_conns || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	return bitRead(conn_encrypted, h_conn); 
+	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+	return handle_read(conn_encrypted, h_conn);
 }
 
-void send_alarm_notify() {
-	//if (!subs_io) return;
-	for (size_t i = 1; i < max_conns; i++) {
-		if (subs_io & BIT(i)) {
-			CHECK_VOID(ble_gatts_notify(i, h_io_chr)); //ESP_LOGI(TAG, "send_alarm_notify %u", i);
-		}
-	}
+handle_mask_t get_conn_encrypted() { return conn_encrypted; }
+
+handle_mask_t need_notify_io() { return subs_io; }
+
+void send_io_notify() {
+	for (uint16_t h = MIN_HANDLE_VAL; h < MAX_HANDLE; h++)
+		if (handle_read(subs_io, h)) 
+			CHECK_VOID(ble_gatts_notify(h, h_io_chr)); //ESP_LOGI(TAG, "send_io_notify %u", i);
 }
 
 void send_spp_notify() {
 	if(!subs_spp) return;
-	for (size_t i = 1; i < max_conns; i++) {
-		if (subs_spp & BIT(i)) {
-			CHECK_VOID(ble_gatts_notify(i, h_spp_chr)); //ESP_LOGI(TAG, "send_spp_notify %u", i);
-		}
-	}
+	for (uint16_t h = MIN_HANDLE_VAL; h < MAX_HANDLE; h++)
+		if (handle_read(subs_spp, h))
+			CHECK_VOID(ble_gatts_notify(h, h_spp_chr)); //ESP_LOGI(TAG, "send_spp_notify %u", i);
 }
 
 void send_heart_rate_notify() {
 	if(!subs_heart) return;
-	for (size_t i = 1; i < max_conns; i++) {
-		if (subs_heart & BIT(i)) {
-			CHECK_VOID(ble_gatts_notify(i, h_heart_chr)); //ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
-		}
-	}
+	for (uint16_t h = MIN_HANDLE_VAL; h < MAX_HANDLE; h++)
+		if (handle_read(subs_heart, h))
+			CHECK_VOID(ble_gatts_notify(h, h_heart_chr)); //ESP_LOGI(TAG, "send_heart_rate_notify %u", i);
 }
 
 int gatt_svr_subscribe_cb(const struct ble_gap_event *event) {
 	const size_t attr_handle = event->subscribe.attr_handle;
 	const size_t h_conn = event->subscribe.conn_handle;
-	if (unlikely(h_conn > max_conns)) return BLE_ATT_ERR_INVALID_HANDLE;
+	if (unlikely(h_conn > MAX_HANDLE)) return BLE_ATT_ERR_INVALID_HANDLE;
 	if (!is_encrypted(h_conn)) {
 		ESP_LOGW(TAG, "connection not encrypted!");
 		return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
-	}
-	bool notify = event->subscribe.cur_notify | event->subscribe.cur_indicate;
+	} ESP_LOGD(TAG, "conn_encrypted 0x%04x", conn_encrypted);
+	uint8_t notify = event->subscribe.cur_notify | event->subscribe.cur_indicate;
 #ifdef AUTO_IO_CHR
-	if(attr_handle == h_io_chr) { bitWrite(subs_io, h_conn, notify); }
+	if(attr_handle == h_io_chr) { handle_write(subs_io, h_conn, notify); return 0; }
 #endif
 #ifdef SPP_CHR
-	else if(attr_handle == h_spp_chr)  { bitWrite(subs_spp, h_conn, notify); }
+	else if(attr_handle == h_spp_chr) { handle_write(subs_spp, h_conn, notify); return 0; }
 #endif
 #ifdef HEART_RATE_CHR
-	else if (attr_handle == h_heart_chr)  { bitWrite(subs_heart, h_conn, notify); }
+	else if (attr_handle == h_heart_chr) { handle_write(subs_heart, h_conn, notify); return 0; }
 #endif
 	return BLE_ATT_ERR_ATTR_NOT_FOUND;
 }
 
-void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {
+void gatt_init(void) {
+	ble_svc_gatt_init();
+	CHECK_VOID(ble_gatts_count_cfg(gatt_svr_svcs)); 
+	CHECK_VOID(ble_gatts_add_svcs(gatt_svr_svcs));
+	gatt_cts_service_init();
+	gatt_hid_service_init();
+	
+}
+
+void gatt_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {
 	__unused char buf[BLE_UUID_STR_LEN];
 	/* Handle TAG attributes register events */
 	switch (ctxt->op) {
@@ -259,4 +270,3 @@ void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {
 	default: ESP_LOGW(TAG, "Unknown event");
 	}
 }
-
