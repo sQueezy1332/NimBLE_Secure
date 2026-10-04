@@ -6,8 +6,7 @@ extern "C" {
 #endif
 extern void ble_store_config_init(void);
 const char* ble_svc_gap_device_name(void);
-int ble_svc_gap_device_name_set(const char *);
-void ble_store_config_conf_init(); //CONFIG_BT_NIMBLE_NVS_PERSIST=y
+int ble_svc_gap_device_name_set(const char *); //CONFIG_BT_NIMBLE_NVS_PERSIST=y
 struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 
 struct ble_gap_event; struct os_mbuf; struct ble_gatt_register_ctxt;
 union ble_store_key; union ble_store_value;
@@ -29,11 +28,6 @@ void ble_connect_cb(int);
 int ble_disconnect_cb(uint16_t);
 int ble_conn_encrypted_cb(uint16_t); 
 int parse_rx_data_cb(const struct ble_gap_event*);
-
-#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-
-typedef struct ble_store_value_sec my_ble_store_t; //MYNEWT_VAL_BLE_MAX_CONNECTIONS
-#endif /* !MYNEWT_VAL(BLE_STORE_MAX_BONDS) */
 
 #ifdef __cplusplus
 }

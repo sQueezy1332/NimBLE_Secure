@@ -75,7 +75,7 @@ compile_commands.json
 .clangd
 
 *.pem
-credential*
+credentials*
 .*
 *.gz
 sdkconfig

@@ -10,7 +10,6 @@ extern "C" void app_main() { {
 		h_timer_img_valid = esp_timer_new([](void*) IRAM_ATTR { 
 			ESP_DRAM_LOGW(TMR, "OTA_VALID EXPIRED"); esp_restart();}, NULL, ESP_TIMER_ISR);
 		ESP_ERROR_CHECK(esp_timer_start(h_timer_img_valid, TIMER_OTA_VALID));
-		
 	}
 	nvs_init();
 	nvs_erase_all(nvsApi("phy", NVS_READWRITE));

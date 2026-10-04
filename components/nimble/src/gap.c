@@ -4,7 +4,6 @@
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "store/config/ble_store_config.h"
-#include "rom/crc.h"
 
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 static const char* TAG = "GAP";
@@ -35,7 +34,6 @@ static void parse_adv_data(const uint8_t*, uint8_t);
 static void print_rx_data(const struct os_mbuf *);
 static void print_event_report_ext(const struct ble_gap_ext_disc_desc*);
 static void print_event_report(const struct ble_gap_disc_desc*);
-static void print_bond_data(const struct ble_store_value_sec *ptr);
 //static void print_event_report(const decltype(ble_gap_event::periodic_report) & rep);
 //static void print_event_report(const decltype(ble_gap_event::periodic_sync) & rep);
 //static void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep);
@@ -46,11 +44,6 @@ static uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
 
 static uint16_t scan_interval = 0;
 static uint16_t scan_window = 0;
-__NOINIT_ATTR static my_ble_store_t bonds[CONFIG_BT_NIMBLE_MAX_BONDS];
-__NOINIT_ATTR static int num_peers;
-__NOINIT_ATTR static uint16_t bonds_count;
-__NOINIT_ATTR static uint16_t crc_bonds;
-__NOINIT_ATTR static struct ble_store_value_local_irk local_irk;
  //sizeof(ble_gap_conn_desc); //44
 
 /*
@@ -263,165 +256,6 @@ void ble_scan_init() {
 
 static void ble_stack_reset(int reason) { ESP_LOGW("NimBLE", "nimble stack reset, reason: %d", reason);}; 
 
-static int my_ble_store_comparator(const void *a, const void *b) {
-    const struct ble_store_value_sec *sec_a = ((struct ble_store_value_sec*)a);
-    const struct ble_store_value_sec *sec_b = ((struct ble_store_value_sec*)b);
-    return (signed)sec_a->bond_count - (signed)sec_b->bond_count;
-}
-
-static int my_ble_store_find(const struct ble_store_key_sec *key_sec, const my_ble_store_t* value_secs, size_t num_value_secs) {
-	if(num_value_secs) {
-		size_t i = key_sec->idx;
-		((struct ble_store_key_sec *)key_sec)->idx = 0;
-		uint64_t key = *(uint64_t*)&key_sec->peer_addr;
-		if(key == 0x00) {
-			ESP_LOGI(TAG, "finding BLE_ADDR_ANY key idx: %u", i);
-			if(i < num_value_secs)
-				return i;
-			return -1;
-		}
-		for (i = 0; i < num_value_secs; i++) {
-			const struct ble_store_value_sec* cur = &value_secs[i];
-			if (key == *(uint64_t*)&(cur->peer_addr)) {
-                ESP_LOGI(TAG, "finded addr [%u]: %s",i, format_addr(cur->peer_addr.val));
-				return i;
-            }
-		}
-	}
-	return -1;
-}
-static int ble_store_config_delete_obj(void *values, size_t value_size, size_t idx, int *restrict num_values) {
-	uint8_t *dst; uint8_t *src;
-    size_t move_count;
-    //BLE_HS_DBG_ASSERT(idx >= 0 && idx < *num_values && *num_values > 0);
-    (*num_values)--;
-    if (idx < *num_values) {
-        dst = values;
-        dst += idx * value_size;
-        src = dst + value_size;
-        move_count = *num_values - idx;
-        memmove(dst, src, move_count * value_size);
-    }
-    return 0;
-}
-
-static int ble_store_config_delete_hook(int obj_type, const union ble_store_key *key) {
-	ESP_LOGI(TAG, "delete obj_type %u", obj_type);
-	int idx;
-	switch (obj_type) {
-		case BLE_STORE_OBJ_TYPE_OUR_SEC: 
-			break;
-		case BLE_STORE_OBJ_TYPE_PEER_SEC: 
-			idx = my_ble_store_find(&key->sec, bonds, num_peers);
-			if(idx == -1) break;
-			return ble_store_config_delete_obj(bonds, sizeof(bonds[0]), idx, &num_peers);
-		case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
-			//return ble_store_config_delete(obj_type, key);
-			if(*(uint64_t*)&key->local_irk.addr != *(uint64_t*)&local_irk.addr) break;
-			memset(&local_irk, 0, sizeof(local_irk));
-			return 0;
-		default: ESP_LOGD(TAG, "\tBLE_HS_EDISABLED");
-			break;
-	}
-	return BLE_HS_ENOENT;
-}
-
-static int ble_store_config_read_hook(int obj_type, const union ble_store_key *key, union ble_store_value *value) {
-	// = ble_store_config_read(obj_type, key, value);
-	//ESP_LOGI(TAG, "read obj_type %u %c", obj_type, idx == 0 ? '+' : '-');
-	ESP_LOGI(TAG, "read obj_type %u", obj_type);
-	switch (obj_type) {
-		case BLE_STORE_OBJ_TYPE_OUR_SEC:
-		case BLE_STORE_OBJ_TYPE_PEER_SEC:
-			break;
-		case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
-			if(*(uint64_t*)&local_irk) {
-				value->local_irk = local_irk;
-				return 0;
-			}
-			return BLE_HS_ENOENT;
-			//return ble_store_config_read(obj_type, key, value);
-		default:
-			ESP_LOGD(TAG, "\tBLE_HS_ENOENT");
-			return BLE_HS_ENOENT;
-	}
-		int idx = my_ble_store_find(&key->sec, bonds, num_peers);
-		if (idx == -1) {
-        	return BLE_HS_ENOENT;
-    	}
-		value->sec = bonds[idx]; 
-		if(obj_type == BLE_STORE_OBJ_TYPE_OUR_SEC) {
-			if(likely(*(uint64_t*)&local_irk)) {
-				memcpy(&value->sec.irk, local_irk.irk, sizeof(local_irk.irk));
-				value->sec.irk_present = 1;
-			} else { value->sec.irk_present = 0; }
-		}
-	return 0;
-}
-
-static int ble_store_config_write_hook(int obj_type, const union ble_store_value *val) {
-	ESP_LOGI(TAG, "write obj_type %u", obj_type);
-	switch (obj_type) {
-		//case BLE_STORE_OBJ_TYPE_OUR_SEC:ptr = &bonds[0];break;
-		case BLE_STORE_OBJ_TYPE_PEER_SEC:
-			break;
-		case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
-			local_irk = val->local_irk;
-			return 0;
-			//return ble_store_config_write(obj_type, val); 
-		default: ESP_LOGD(TAG, "\tBLE_HS_EDISABLED");
-			return BLE_HS_EDISABLED; 
-	}
-    int idx = my_ble_store_find((struct ble_store_key_sec*)&val->sec, bonds, num_peers);
-    if (idx == -1) {
-        if (num_peers >= sizeof(bonds) / sizeof(bonds[0])) {
-            ESP_LOGD(TAG, "error persisting peer sec; too many entries ""(%d)\n", num_peers);
-            return BLE_HS_ENOMEM; //return BLE_HS_ESTORE_CAP;
-        }
-        idx = num_peers;
-        (num_peers)++;
-		ESP_LOGI(TAG, "new peer № %u", num_peers);
-    }
-    bonds[idx] = val->sec;
-    bonds[idx].bond_count = ++bonds_count;
-	ESP_LOGD(TAG, "bond_count: %d", bonds_count);
-	print_bond_data(&bonds[idx]);
-    /* Ensure entries are sorted at all times */
-    qsort(bonds, num_peers, sizeof(my_ble_store_t), my_ble_store_comparator);
-    /*if (bonds_count > (UINT16_MAX - 5)) { //not need because buffer is temporary
-        rc = ble_restore_peer_sec_nvs();
-        if (rc != 0) {
-            return rc;
-        }
-    }*/
-   	crc_bonds = crc16_le(0, (uint8_t*)&bonds, sizeof(bonds)); //TODO
-	return 0;
-}
-
-static void print_bond_data(const struct ble_store_value_sec *val) {
-	NIMLOG("peer address: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
-	NIMLOG("\nkey_size %u", val->key_size);
-	if(val->ediv) {
-		NIMLOG("\nediv %u", val->ediv);
-	}
-	if(val->rand_num) {
-		NIMLOG("\nrand_num 0x%08X", ((size_t*)&val->rand_num)[1]); 
-		NIMLOG("%08X", ((size_t*)&val->rand_num)[0]);
-	}	
-	if(val->ltk_present) {
-		NIMLOG("\nLTK:\t");
-		for (size_t i = 0; i < sizeof(val->ltk); ++i) { NIMLOG("%02X", val->ltk[i]);} 
-	}
-	if(val->irk_present) {
-		NIMLOG("\nIRK:\t");
-		for (size_t i = 0; i < sizeof(val->irk); ++i) { NIMLOG("%02X", val->irk[i]);} 
-	}
-	if(val->sign_counter) {
-		NIMLOG("\nsign_counter %u", (size_t)val->sign_counter);
-	}
-	NIMLOG("\nauthenticated %u, sc %u\n", val->authenticated, val->sc);
-}
-
 void nimble_host_config_init() {
 	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC);
 	static_assert(!CONFIG_BT_NIMBLE_MAX_CCCDS);
@@ -443,20 +277,8 @@ void nimble_host_config_init() {
 	ble_hs_cfg.reset_cb = ble_stack_reset;//on_stack_reset is called when host resets BLE stack due to errors
 	ble_hs_cfg.sync_cb = host_sync_cb;
 	ble_hs_cfg.gatts_register_cb = gatt_register_cb;
-	ble_hs_cfg.store_read_cb = ble_store_config_read_hook;
-	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
-	//ble_hs_cfg.store_write_cb = ble_store_config_write;
-	ble_hs_cfg.store_delete_cb = ble_store_config_delete_hook;
-	ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-	//ble_store_config_conf_init(); //ble_store_config_init(); //STORAGE
-	if(crc_bonds != crc16_le(0, (uint8_t*)&bonds, sizeof(bonds))) { //TODO
-		ESP_LOGW(TAG, "!crc_bonds");
-		memset(bonds, 0, sizeof(bonds));
-		memset(&local_irk, 0, sizeof(local_irk)); 
-		num_peers = 0; bonds_count = 0;
-		crc_bonds = crc16_le(0, (uint8_t*)&bonds, sizeof(bonds));
-	}
-	
+	//ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+	ble_store_config_conf_init(); //ble_store_config_init(); //STORAGE
 }
 
 /**
