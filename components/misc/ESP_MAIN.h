@@ -23,12 +23,12 @@
 #else 
 #pragma message "UART0"
 #endif  // !ARDUINO_USB_CDC_ON_BOOT -- Serial is used from UART0
-#define DEBUG(x, ...) printf(x, ##__VA_ARGS__)
+//#define DEBUG(x, ...) printf(x, ##__VA_ARGS__)
 #define DEBUGLN() printf("\n")
 //#define DEBUGLN(x, ...) printf("%s\n", x, ##__VA_ARGS__)
 #define DEBUGF(x, ...) printf(x , ##__VA_ARGS__)
 #else
-#define DEBUG(x, ...)
+//#define DEBUG(x, ...)
 #define DEBUGLN()
 #define DEBUGF(x, ...)
 #endif // DEBUG_ENABLE

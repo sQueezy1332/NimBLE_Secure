@@ -131,7 +131,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t eve
 }
 
 void wifi_setup_default(wifi_storage_t storage) {
-	if (h_group_wifi) { ESP_LOGE(TAG, "already inited"); return;}
+	if (h_group_wifi) { ESP_LOGE(TAG, "already inited"); return; }
 	h_group_wifi = xEventGroupCreate(); assert(h_group_wifi);
 	ESP_ERROR_CHECK(esp_netif_init());
 	ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -159,7 +159,7 @@ esp_err_t wifi_init_sta(const char* ssid, const char* pass, uint8_t channel, wif
 	wifi_bandwidths_t band = {.ghz_2g = bw }; 
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_bandwidths(WIFI_IF_STA, &band));
 	ESP_LOGI(TAG_STA, "%s finished.", __FUNCTION__);
-	ESP_LOGI(TAG_STA, "SSID '%s' pass '%s'", wifi_config.sta.ssid, wifi_config.sta.password);
+	ESP_LOGD(TAG_STA, "SSID '%s' pass '%s'", wifi_config.sta.ssid, wifi_config.sta.password);
 	return ESP_OK;
     
 }
@@ -187,7 +187,7 @@ esp_err_t wifi_init_ap(const char* ssid, const char* pass, uint8_t channel, uint
 	esp_wifi_set_max_tx_power(power); wifi_bandwidths_t band = {.ghz_2g = bw};
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_bandwidths(WIFI_IF_AP, &band));
 	ESP_LOGI(TAG_AP, "%s finished.", __FUNCTION__);
-	ESP_LOGI(TAG_AP, "SSID '%s' pass '%s'", wifi_ap_config.ap.ssid, wifi_ap_config.ap.password);
+	ESP_LOGD(TAG_AP, "SSID '%s' pass '%s'", wifi_ap_config.ap.ssid, wifi_ap_config.ap.password);
 	ESP_LOGI(TAG_AP, "channel %u max_conn %u", wifi_ap_config.ap.channel, wifi_ap_config.ap.max_connection);
 	return ESP_OK;
 }

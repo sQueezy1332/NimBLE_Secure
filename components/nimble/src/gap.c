@@ -3,13 +3,12 @@
 #include "gatt.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
-#include "store/config/ble_store_config.h"
-
+//#include "store/config/ble_store_config.h"
+#include "ble_store_config.h"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 static const char* TAG = "GAP";
 //#define RANDOM_ADDR
 
-/* Private function declarations */
 const char* format_addr(const uint8_t addr[]) {
 	static char buf[18];
 	sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x", addr[5], addr[4],addr[3], addr[2], addr[1], addr[0]);
@@ -28,6 +27,7 @@ const char* format_addr(const uint8_t addr[]) {
 //__weak_symbol int parse_rx_data(const struct ble_gap_event*) { return 0; }
 
 void set_random_addr(void);
+/* Private function declarations */
 static void print_conn_desc(struct ble_gap_conn_desc *);
 static int gap_event_handler(struct ble_gap_event *, void *);
 static void parse_adv_data(const uint8_t*, uint8_t);
@@ -40,7 +40,7 @@ static void print_event_report(const struct ble_gap_disc_desc*);
 
 __unused bool synced;
 __unused static uint8_t own_addr_val[6] = {};
-static uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
+uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
 
 static uint16_t scan_interval = 0;
 static uint16_t scan_window = 0;
@@ -213,7 +213,7 @@ void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
 		ESP_LOGW(TAG, "ext_adv_configure %d", ret);
 		return; 
 	}
-	else { assert(!ret); } 
+	else { ESP_ERROR_CHECK(ret); } 
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */
 	struct os_mbuf *data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0);// assert(data);
 	ESP_ERROR_CHECK(ble_hs_adv_set_fields_mbuf(&adv_fields, data));
@@ -278,7 +278,7 @@ void nimble_host_config_init() {
 	ble_hs_cfg.sync_cb = host_sync_cb;
 	ble_hs_cfg.gatts_register_cb = gatt_register_cb;
 	//ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-	ble_store_config_conf_init(); //ble_store_config_init(); //STORAGE
+	ble_store_init(); //STORAGE
 }
 
 /**
@@ -293,7 +293,7 @@ void nimble_host_config_init() {
  *	
  */
 int save_bonding(uint16_t h_conn) {
-	assert(0); //TODO
+	return -1; //TODO
 	struct ble_gap_conn_desc desc;
 	int rc = ble_gap_conn_find(h_conn, &desc);
 	if(rc) return rc; //log internal
@@ -306,16 +306,16 @@ int save_bonding(uint16_t h_conn) {
 		return BLE_HS_EENCRYPT;
 	}
 	print_conn_desc(&desc);
-	union ble_store_key key = { .sec.peer_addr = desc.peer_id_addr, .sec.idx = 0 };
-	rc = my_ble_store_find(&key.sec, bonds, num_peers);
+	//union ble_store_key key = { .sec.peer_addr = desc.peer_id_addr, .sec.idx = 0 };
+	//rc = my_ble_store_find(&key.sec, bonds, num_peers);
 	if (rc == -1) {
-		rc = my_ble_store_find(&key.sec, bonds, num_peers);
+		//rc = my_ble_store_find(&key.sec, bonds, num_peers);
 		if (rc == -1) return BLE_HS_ENOENT;
 	}
 	//ble_hs_cfg.store_write_cb = ble_store_config_write;
 	///rc = ble_store_write(BLE_STORE_OBJ_TYPE_OUR_SEC, (union ble_store_value *)&bonds->peer_secs); //1
-		rc = ble_store_write(BLE_STORE_OBJ_TYPE_PEER_SEC, (union ble_store_value *)&bonds[rc]); //2
-	ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
+		//rc = ble_store_write(BLE_STORE_OBJ_TYPE_PEER_SEC, (union ble_store_value *)&bonds[rc]); //2
+	//ble_hs_cfg.store_write_cb = ble_store_config_write_hook;
 	return rc;
 }
 

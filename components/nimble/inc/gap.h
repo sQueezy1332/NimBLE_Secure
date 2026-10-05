@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern void ble_store_config_init(void);
+
 const char* ble_svc_gap_device_name(void);
 int ble_svc_gap_device_name_set(const char *); //CONFIG_BT_NIMBLE_NVS_PERSIST=y
 struct ble_hs_adv_fields; struct ble_gap_conn_desc; struct ble_hs_cfg; 

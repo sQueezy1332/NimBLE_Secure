@@ -31,8 +31,9 @@
 #include "ble_store_config_priv.h"
 #include "esp_log.h"
 #include "nvs.h"
-#include "../../../src/ble_hs_resolv_priv.h"
+//#include "../../../src/ble_hs_resolv_priv.h"
 
+#if MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST)
 
 #define NIMBLE_NVS_STR_NAME_MAX_LEN              16
 #define NIMBLE_NVS_PEER_SEC_KEY                  "peer_sec"
@@ -665,7 +666,7 @@ ble_nvs_restore_sec_keys(void)
 {
     int err;
     int flag = 0;
-    extern int ble_store_config_compare_bond_count(const void *a, const void *b);
+    extern int ble_store_compare_bond_count(const void *a, const void *b);
 
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
     err = populate_db_from_nvs(BLE_STORE_OBJ_TYPE_OUR_SEC, ble_store_config_our_secs,
@@ -704,10 +705,10 @@ ble_nvs_restore_sec_keys(void)
     if (flag) {
 
         qsort(ble_store_config_our_secs, ble_store_config_num_our_secs,
-            sizeof(struct ble_store_value_sec), ble_store_config_compare_bond_count);
+            sizeof(struct ble_store_value_sec), ble_store_compare_bond_count);
 
         qsort(ble_store_config_peer_secs, ble_store_config_num_peer_secs,
-            sizeof(struct ble_store_value_sec), ble_store_config_compare_bond_count);
+            sizeof(struct ble_store_value_sec), ble_store_compare_bond_count);
     }
 
     /* Only access array if we have valid entries to prevent index -1 access */
@@ -1077,7 +1078,7 @@ int ble_store_persist_peer_records(void)
 }
 #endif
 
-void ble_store_config_conf_init(void)
+void ble_store_nvs_init(void)
 {
     int err;
 
@@ -1092,4 +1093,4 @@ void ble_store_config_conf_init(void)
     }
 #endif
 }
-
+#endif //#if MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST)

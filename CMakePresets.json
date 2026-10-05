@@ -1,26 +1,23 @@
-{
-  "version": 3,
-  "configurePresets": [
-    {
-      "name": "debug",
-      "displayName": "Debug Profile",
-      "generator": "Ninja",
-      "binaryDir": "build_debug",
-      "cacheVariables": {
-        "SDKCONFIG": "sdkconfig.__debug",
-        "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.debug"
-      }
-    },
-    {
-      "name": "release",
-      "displayName": "Release Profile",
-      "generator": "Ninja",
-      "binaryDir": "build_release",
-      "cacheVariables": {
-        "SDKCONFIG": "sdkconfig.__release",
-        "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.release",
-        "IDF_TARGET": "esp32c3"
-      }
-    }
-  ]
+{ 	"version": 3,
+	"configurePresets": [
+		{
+			"name": "default",
+			"hidden": true,
+			"generator": "Ninja",
+			"binaryDir": "./build_${presetName}/",
+			"cacheVariables": {
+				"SDKCONFIG": "./build_${presetName}/sdkconfig._${presetName}",
+				"SDKCONFIG_DEFAULTS": "./sdkconfig.defaults;sdkconfig.${presetName}",
+				"IDF_TARGET": "esp32c3"
+			}
+		},
+		{
+			"name": "debug",
+			"inherits": "default"
+		},
+		{
+			"name": "release",
+			"inherits": "default"
+		}
+	]
 }

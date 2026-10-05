@@ -18,7 +18,7 @@
  */
 
 #pragma once
-typedef struct ble_store_value_sec my_ble_store_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -101,14 +101,14 @@ extern ble_store_config_vars_t * ble_store_config_vars;
 #endif
 #endif /* MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) */
 
-#if not MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)
+#if !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-extern my_ble_store_t ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern ble_store_t ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 extern int ble_store_config_num_our_secs;
 extern uint16_t ble_store_config_our_bond_count;
 
 extern uint16_t ble_store_config_peer_bond_count;
-extern my_ble_store_t ble_store_config_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern ble_store_t ble_store_config_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 extern int ble_store_config_num_peer_secs;
 #endif
 
@@ -131,14 +131,14 @@ extern int ble_store_config_num_eads;
 extern struct ble_store_value_rpa_rec ble_store_config_rpa_recs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 extern int ble_store_config_num_rpa_recs;
 
-extern struct ble_store_value_local_irk ble_store_config_local_irks;
-//extern int ble_store_config_num_local_irks;
+extern struct ble_store_value_local_irk ble_store_config_local_irks[1];
+extern int ble_store_config_num_local_irks;
 #endif
 #endif /* !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) */
 
-#if 0 || MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST)
+#if MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST)
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-//int ble_store_config_persist_our_secs(void);
+int ble_store_config_persist_our_secs(void);
 int ble_store_config_persist_peer_secs(void);
 #endif
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
@@ -148,35 +148,35 @@ int ble_store_config_persist_cccds(void);
 int ble_store_config_persist_csfcs(void);
 #endif
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-//int ble_restore_our_sec_nvs(void);
-int ble_restore_peer_sec_nvs(void);
+int ble_rearrange_our_sec_nvs(void);
+int ble_rearrange_peer_sec_nvs(void);
 #endif
 #if MYNEWT_VAL(ENC_ADV_DATA)
 int ble_store_config_persist_eads(void);
 #endif
-//int ble_store_config_persist_rpa_recs(void);
+int ble_store_config_persist_rpa_recs(void);
 int ble_store_config_persist_local_irk(void);
-void ble_store_config_conf_init(void);
+void ble_store_nvs_init();
 #if MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) || (MYNEWT_VAL(MP_RUNTIME_ALLOC))
 void ble_store_config_deinit(void);
 #endif
 #else
 
-//static inline int ble_store_config_persist_our_secs(void)   { return 0; }
-static inline int ble_store_config_persist_peer_secs(void)  { return 0; }
-static inline int ble_store_config_persist_cccds(void)      { return 0; }
-static inline int ble_store_config_persist_csfcs(void)      { return 0; }
+static inline int ble_store_config_persist_our_secs(void) { return 0; }
+static inline int ble_store_config_persist_peer_secs(void) { return 0; }
+static inline int ble_store_config_persist_cccds(void) { return 0; }
+static inline int ble_store_config_persist_csfcs(void) { return 0; }
 #if MYNEWT_VAL(ENC_ADV_DATA)
-static inline int ble_store_config_persist_eads(void)       { return 0; }
+static inline int ble_store_config_persist_eads(void) { return 0; }
 #endif
-//static inline int ble_store_config_persist_rpa_recs(void)   { return 0; }
-static inline int ble_store_config_persist_local_irk(void)   { return 0; }
-static inline void ble_store_config_conf_init(void)         { }
+static inline int ble_store_config_persist_rpa_recs(void) { return 0; }
+static inline int ble_store_config_persist_local_irk(void) { return 0; }
+static inline void ble_store_nvs_init(void) {}
 #if MYNEWT_VAL(MP_RUNTIME_ALLOC)
-static inline void ble_store_config_deinit(void)            { }
+static inline void ble_store_config_deinit(void) {}
 #endif
 #if MYNEWT_VAL(BLE_HOST_BASED_PRIVACY)
-static inline int ble_store_persist_peer_records(void)      { return 0; }
+static inline int ble_store_persist_peer_records(void) { return 0; }
 #endif
 #endif /* MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST) */
 

@@ -22,9 +22,8 @@
 #include <memory>
 #include "credentials.h"
 #include "tlsf_block_functions.h"
-#define nvs_sets_t u64
-#define nvs_read_sets_impl(...) CONCAT(nvs_get_, u64)(__VA_ARGS__)
-#define nvs_write_sets_impl(...) CONCAT(nvs_set_, u64)(__VA_ARGS__)
+
+static const char* TAG = "MAIN";
 #ifdef DEBUG_ENABLE
 	#include "led.h"
 	#define DEBUG_LED(...) led_set(__VA_ARGS__)
@@ -38,8 +37,10 @@
 	static_assert(!configUSE_TIME_SLICING);
 	static_assert(CONFIG_BOOTLOADER_WDT_DISABLE_IN_USER_CODE); static_assert(CONFIG_BOOTLOADER_WDT_TIME_MS >= 15000);
 #endif
+#define TIMER_WIFI      (MINS * 15)
+#define TIMER_OTA_VALID (MINS * 15)
+#define TIMER_CHECK_RSSI (1000 * 300)
 
-static const char* TAG = "MAIN";
 #define TMR "TMR"
 #define HEART_RATE_PERIOD (2000 * 1000)
 #define dWrite(x,y) digitalWrite(x, y)
@@ -95,13 +96,13 @@ static void (*patch_impl)(uint8_t) = lock_open_only;
 	#define RELAY_2_PATCH_IMPL()
 	#define RELAY_2_UNPATCH_IMPL()
 #endif
-
+#define MIN_RSSI_PATCH_DEFAULT (-90)
 #define CDC_BUF_SIZE (128)
 
 using String = std::string;
 typedef struct { uint8_t patch , ota , flag;  uint8_t crc; uint32_t reserved; } settings;
 typedef struct { int8_t rssi , ota; uint16_t crc; } sets_noinit;
-static_assert(sizeof(sets_noinit) == 4); static_assert(sizeof(settings) == sizeof(nvs_sets_t)); 
+static_assert(sizeof(sets_noinit) == 4);
 typedef enum notify_enum : uint8_t 
 { ok, ADV, OTA, VALID, NOTIFY_IO, NOTIFY_TIME, ACCESS_BLE, EXIT_BUTTION, ADV_RESTART, MAIN, RESTART, DEBUG_LED_OFF} action_t;
 
@@ -171,6 +172,10 @@ size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
 template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);
 int bytes_to_str_bigend(const uint8_t* src, char* dest, size_t data_size) { return bytes_to_str<true, ' '>(src, dest, data_size) ; };
 
+#define nvs_sets_t u64
+#define nvs_read_sets_impl(...) CONCAT(nvs_get_, u64)(__VA_ARGS__)
+#define nvs_write_sets_impl(...) CONCAT(nvs_set_, u64)(__VA_ARGS__)
+static_assert(sizeof(settings) == sizeof(nvs_sets_t)); 
 void nvs_sets_read();
 void nvs_sets_write(nvsApi nvs = nvsApi(NVS_SPACE_SETTINGS, NVS_READWRITE));
 inline auto crc_impl(const sets_noinit & buf = noinit) {
@@ -201,7 +206,7 @@ uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
 std::unique_ptr<char[]> task_list(size_t* len = nullptr);
-void print_task_list() { __unused size_t len = 0; DEBUG("%.*s", len, task_list(&len).get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+void print_task_list() { __unused size_t len = 0; DEBUGF("%.*s", len, task_list(&len).get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
 #if CONFIG_HEAP_USE_HOOKS
@@ -225,7 +230,7 @@ void set_main_partition() { write_noinit_ota(0); }
 inline void totp_test() {
 	uint8_t buf[64]; char str[64];
 	const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
-	DEBUG("base32_decode()\n");
+	DEBUGF("base32_decode()\n");
 	for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); }
 	DEBUGLN(); ESP_LOGD(TAG,"length %d\n", len);
 	if (len > 0) {
