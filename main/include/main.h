@@ -133,7 +133,6 @@ static void IRAM_ATTR timer_patch_off_cb(void *);
 //__unused static void nimble_host_task(void *);
 extern void set_cts_unix(time_t now);
 extern void adv_init(uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = true);
-static void adv_restart_ev_cb(struct ble_npl_event *ev) { adv_init(); }
 	
 #ifndef CONFIG_DOMOPHONE
 void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) { };
@@ -145,11 +144,11 @@ void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
 void ble_scan_complete_cb() { ble_scan_init(); }
 void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
 #else
-void ota_update_start_cb() { /*reconfigure_task_wdt(30);*/ ble_gap_ext_adv_stop(0); portYIELD(); } 
-void ota_update_end_cb() { /*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/ adv_init(); }
+void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/  } 
+void ota_update_end_cb() { adv_init(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/  }
+int get_wifi_rssi() { int r; if(!esp_wifi_sta_get_rssi(&r)) { return r; } return -1; }
 void ble_scan_complete_cb() { }
-static struct ble_npl_event adv_restart_event;
-void ble_adv_complete_cb() { ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &adv_restart_event); }
+void ble_adv_complete_cb() { nimble_event_put(); }
 
 void sntp_setup();
 void check_distance_by_rssi();
@@ -164,8 +163,8 @@ esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi,
 void ble_device_name_set();
 void wifi_hostname_set();
 int ble_delete_all_bonds();
-void ble_connect_cb(int status) { ble_adv_complete_cb(); }
-int ble_disconnect_cb(uint16_t handle) { ble_adv_complete_cb(); return clear_connection(handle); }
+void ble_connect_cb(int status) { nimble_event_put(); }
+int ble_disconnect_cb(uint16_t handle) { nimble_event_put(); return clear_connection(handle); }
 
 
 size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);

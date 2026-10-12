@@ -169,7 +169,8 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 }
 
 void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
-	if(ble_gap_ext_adv_active(0)) return;
+	const uint8_t instance = 0;
+	if(ble_gap_ext_adv_active(instance)) return;
 	//const ble_uuid32_t uuid32 = BLE_UUID32_INIT(generate_uuid32());
 	__unused const ble_uuid16_t uuid16 = BLE_UUID16_INIT(field);
 	__unused const uint8_t esp_uri[] = { BLE_GAP_URI_PREFIX_HTTPS, '/', '/', 'e', 's', 'p', 'r', 'e', 's', 's', 'i', 'f', '.', 'c', 'o', 'm'};
@@ -209,16 +210,13 @@ void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
 	.tx_power = 21,
 	};
 	int ret = ble_gap_ext_adv_configure(0, &ext_adv_cfg, &tx_pwr,gap_event_handler, NULL);
-	if(unlikely(ret == BLE_HS_ENOMEM || ret == BLE_HS_EBUSY)) { 
-		ESP_LOGW(TAG, "ext_adv_configure %d", ret);
-		return; 
-	}
-	else { ESP_ERROR_CHECK(ret); } 
+	if(unlikely(ret == BLE_HS_ENOMEM || ret == BLE_HS_EBUSY)) { return; }
+	else { ESP_ERROR_CHECK(ret); }  //log internal
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */
 	struct os_mbuf *data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0);// assert(data);
 	ESP_ERROR_CHECK(ble_hs_adv_set_fields_mbuf(&adv_fields, data));
-	ESP_ERROR_CHECK(ble_gap_ext_adv_set_data(0, data));
-	ret = ble_gap_ext_adv_start(0, duration_units, 0);
+	ESP_ERROR_CHECK(ble_gap_ext_adv_set_data(instance, data));
+	ret = ble_gap_ext_adv_start(instance, duration_units, 0);
 	if(ret == BLE_HS_HCI_ERR(BLE_ERR_MEM_CAPACITY)) {
 		ESP_LOGE(TAG, "BLE_ERR_MEM_CAPACITY"); return;
 	} else { ESP_ERROR_CHECK(ret);} 
@@ -236,6 +234,17 @@ void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
 	ESP_ERROR_CHECK(ble_gap_adv_start(own_addr_type, NULL, TIMER_ADV, &adv_cfg, gap_event_handler,NULL));
 	ESP_LOGI(TAG, "advertising started!");
 #endif
+}
+#include "nimble/nimble_port.h"
+
+static struct ble_npl_event adv_restart_event;
+
+void nimble_event_put() {
+	ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &adv_restart_event);
+}
+
+void nimble_event_register(void (*fun)(void*), void* arg ) {
+	ble_npl_event_init(&adv_restart_event, (ble_npl_event_fn*)fun, arg);
 }
 
 void set_scan_periods(uint16_t interval, uint16_t window) { scan_interval = interval, scan_window = window; }

@@ -48,8 +48,11 @@ typedef struct ble_store_nvs {
 	uint8_t sc:1;
 	//uint32_t sign_counter; //without enc
 } ble_store_t;
-static_assert(sizeof(ble_store_t) == 56);
 
+static_assert(sizeof(ble_store_t) == 56);
+static_assert(offsetof(struct ble_store_nvs, rand_num) == 8);
+static_assert(offsetof(struct ble_store_value_sec, bond_count) == 8);
+static_assert((size_t)MYNEWT_VAL(BLE_STORE_MAX_BONDS) < 0xFFFF);
 #ifdef __cplusplus
 }
 #endif

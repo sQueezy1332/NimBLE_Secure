@@ -77,13 +77,13 @@ extern ble_store_config_vars_t * ble_store_config_vars;
     #define ble_store_config_rpa_recs           (ble_store_config_vars->_ble_store_config_rpa_recs)
 #endif
 
-#define ble_store_config_local_irks             (ble_store_config_vars->_ble_store_config_local_irks)
+#define ble_store_local_irks             (ble_store_config_vars->_ble_store_config_local_irks)
 #define ble_store_config_num_our_secs           (ble_store_config_vars->_ble_store_config_num_our_secs)
 #define ble_store_config_our_bond_count         (ble_store_config_vars->_ble_store_config_our_bond_count)
 #define ble_store_config_peer_bond_count        (ble_store_config_vars->_ble_store_config_peer_bond_count)
 #define ble_store_config_num_peer_secs          (ble_store_config_vars->_ble_store_config_num_peer_secs)
 #define ble_store_config_num_rpa_recs           (ble_store_config_vars->_ble_store_config_num_rpa_recs)
-#define ble_store_config_num_local_irks         (ble_store_config_vars->_ble_store_config_num_local_irks)
+#define ble_store_num_local_irks         (ble_store_config_vars->_ble_store_config_num_local_irks)
 
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
     #define ble_store_config_cccds              (ble_store_config_vars->_ble_store_config_cccds)
@@ -103,74 +103,74 @@ extern ble_store_config_vars_t * ble_store_config_vars;
 
 #if !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC)
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-extern ble_store_t ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_our_secs;
-extern uint16_t ble_store_config_our_bond_count;
+//extern ble_store_t ble_store_config_our_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+//extern size_t ble_store_config_num_our_secs;
+//extern uint16_t ble_store_config_our_bond_count;
 
-extern uint16_t ble_store_config_peer_bond_count;
-extern ble_store_t ble_store_config_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_peer_secs;
+extern uint16_t ble_store_peer_bond_count;
+extern ble_store_t ble_store_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+extern size_t ble_store_num_peer_secs;
 #endif
 
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
 extern struct ble_store_value_cccd ble_store_config_cccds[MYNEWT_VAL(BLE_STORE_MAX_CCCDS)];
-extern int ble_store_config_num_cccds;
+extern size_t ble_store_config_num_cccds;
 #endif
 
 #if MYNEWT_VAL(BLE_STORE_MAX_CSFCS)
 extern struct ble_store_value_csfc ble_store_config_csfcs[MYNEWT_VAL(BLE_STORE_MAX_CSFCS)];
-extern int ble_store_config_num_csfcs;
+extern size_t ble_store_config_num_csfcs;
 #endif
 
 #if MYNEWT_VAL(ENC_ADV_DATA)
 extern struct ble_store_value_ead ble_store_config_eads[MYNEWT_VAL(BLE_STORE_MAX_EADS)];
-extern int ble_store_config_num_eads;
+extern size_t ble_store_config_num_eads;
 #endif
 
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 extern struct ble_store_value_rpa_rec ble_store_config_rpa_recs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
-extern int ble_store_config_num_rpa_recs;
+extern size_t ble_store_config_num_rpa_recs;
 
-extern struct ble_store_value_local_irk ble_store_config_local_irks[1];
-extern int ble_store_config_num_local_irks;
+extern struct ble_store_value_local_irk ble_store_local_irk[1];
+//extern size_t ble_store_num_local_irks;
 #endif
 #endif /* !MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) */
 
 #if MYNEWT_VAL(BLE_STORE_CONFIG_PERSIST)
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-int ble_store_config_persist_our_secs(void);
-int ble_store_config_persist_peer_secs(void);
+int ble_store_persist_our_secs(void);
+int ble_store_persist_peer_secs(void);
 #endif
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
-int ble_store_config_persist_cccds(void);
+int ble_store_persist_cccds(void);
 #endif
 #if MYNEWT_VAL(BLE_STORE_MAX_CSFCS)
-int ble_store_config_persist_csfcs(void);
+int ble_store_persist_csfcs(void);
 #endif
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 int ble_rearrange_our_sec_nvs(void);
 int ble_rearrange_peer_sec_nvs(void);
 #endif
 #if MYNEWT_VAL(ENC_ADV_DATA)
-int ble_store_config_persist_eads(void);
+int ble_store_persist_eads(void);
 #endif
-int ble_store_config_persist_rpa_recs(void);
-int ble_store_config_persist_local_irk(void);
+int ble_store_persist_rpa_recs(void);
+int ble_store_persist_local_irk(void);
 void ble_store_nvs_init();
 #if MYNEWT_VAL(BLE_STATIC_TO_DYNAMIC) || (MYNEWT_VAL(MP_RUNTIME_ALLOC))
 void ble_store_config_deinit(void);
 #endif
 #else
 
-static inline int ble_store_config_persist_our_secs(void) { return 0; }
-static inline int ble_store_config_persist_peer_secs(void) { return 0; }
-static inline int ble_store_config_persist_cccds(void) { return 0; }
-static inline int ble_store_config_persist_csfcs(void) { return 0; }
+static inline int ble_store_persist_our_secs(void) { return 0; }
+static inline int ble_store_persist_peer_secs(void) { return 0; }
+static inline int ble_store_persist_cccds(void) { return 0; }
+static inline int ble_store_persist_csfcs(void) { return 0; }
 #if MYNEWT_VAL(ENC_ADV_DATA)
-static inline int ble_store_config_persist_eads(void) { return 0; }
+static inline int ble_store_persist_eads(void) { return 0; }
 #endif
-static inline int ble_store_config_persist_rpa_recs(void) { return 0; }
-static inline int ble_store_config_persist_local_irk(void) { return 0; }
+static inline int ble_store_persist_rpa_recs(void) { return 0; }
+static inline int ble_store_persist_local_irk(void) { return 0; }
 static inline void ble_store_nvs_init(void) {}
 #if MYNEWT_VAL(MP_RUNTIME_ALLOC)
 static inline void ble_store_config_deinit(void) {}

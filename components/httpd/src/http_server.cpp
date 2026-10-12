@@ -3,7 +3,7 @@
 #include "esp_check.h"
 #include "esp_httpd_priv.h"
 #include <memory>
-
+#include "tlsf_block_functions.h"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
 
 #define OTA_BUF_SIZE (0x1000)
@@ -29,6 +29,7 @@ __weak_symbol void ota_rollback_revoke() { esp_ota_mark_app_valid_cancel_rollbac
 __weak_symbol void set_main_partition() {}
 __weak_symbol void restart_request() { esp_restart(); }
 __weak_symbol void patch_request_cb() {}
+__weak_symbol int get_wifi_rssi() { return -1;}
 
 extern uint8_t scan_key[32]; extern uint8_t pass_key[32];
 extern uint8_t pass_key_len, scan_key_len;
@@ -243,6 +244,9 @@ esp_err_t http_server_init(void) {
 			.method = HTTP_GET,
 			.handler = [](httpd_req_t *req) {
 				size_t len; auto str = task_list(&len); if(!str) return -1;
+				len += sprintf(&str[len], "Wifi RSSI = %i\n", get_wifi_rssi());
+				len += sprintf(&str[len], "Compiled: " __TIMESTAMP__ "");
+				ESP_LOGD(TAG,"buf_size: %u, strlen: %u", block_size(block_from_ptr(str.get())), len);
 				return httpd_resp_send_text(req, str.get(), len);
 			},
 		},

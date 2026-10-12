@@ -12,7 +12,6 @@ extern "C" void app_main() { {
 		ESP_ERROR_CHECK(esp_timer_start(h_timer_img_valid, TIMER_OTA_VALID));
 	}
 	nvs_init();
-	nvs_erase_all(nvsApi("phy", NVS_READWRITE));
 	__unused auto _noinit = read_noinit();  //0x253D7465 == crc8 //609862 //570586
 #ifdef DEBUG_ENABLE
 	//pinMode(13, OUTPUT);
@@ -26,6 +25,7 @@ extern "C" void app_main() { {
 	esp_log_level_set("esp_netif_handlers", ESP_LOG_INFO);
 	esp_log_level_set("esp_netif_lwip", ESP_LOG_INFO);
 	esp_log_level_set("httpd_uri", ESP_LOG_INFO);
+	esp_log_level_set("httpd_parse", ESP_LOG_INFO);
 	esp_log_level_set("wifi", ESP_LOG_INFO);
 	totp_test();
 	nvs_log();
@@ -43,6 +43,7 @@ extern "C" void app_main() { {
 	if(_noinit.ota) { wifi_init(); }
 #else
   	wifi_init(); sntp_setup();
+	esp_wifi_set_ps(WIFI_PS_MAX_MODEM); //listen_interval 3
 #endif
 	h_timer_patch = esp_timer_new(timer_patch_off_cb, NULL, ESP_TIMER_ISR); assert(h_timer_patch);
 	nvs_sets_read(); 
@@ -132,8 +133,8 @@ void bluetooth_init() {
 	nimble_host_config_init();
 	ble_svc_gap_init();
 	gatt_init();
-	ble_npl_event_init(&adv_restart_event, adv_restart_ev_cb, NULL);
-	h_nimble_task = xTaskCreateStaticPinnedToCore([](void*){ nimble_port_run(); vTaskDelete(h_nimble_task); assert(0); },
+	nimble_event_register([](void *ev) { adv_init(); }, NULL);
+	h_nimble_task = xTaskCreateStaticPinnedToCore([](void*){ nimble_port_run(); vTaskDelete(h_nimble_task); },
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 	CHECK_VOID(ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK));
 }
@@ -338,8 +339,8 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 	enum { 
 		OFFSET = DEF_CMD_OFFSET,
 		OTA_KEY,
-		MAIN_KEY,
 		RESTART_KEY,
+		MAIN_KEY,
 		VALID_KEY,
 		SAVE_BOND,
 		PATCH_STARTUP_DIS,
@@ -391,7 +392,7 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 		break;
 	case RSSI_THERSHOLD:
 		val = buf->om_data[5];
-		if((int8_t)val > -30) return BLE_HS_EBADDATA;
+		if((int8_t)val > -50) return BLE_HS_EBADDATA;
 		noinit.rssi = val; noinit.crc = crc_impl();
 		break;
 #endif	
@@ -514,15 +515,13 @@ std::unique_ptr<char[]> task_list(size_t* len) {
     size_t hours = rem / (60*60);
 	size_t mins = rem % (60*60) / 60;
 	i += sprintf(&str[i] , "Uptime: %ud %uh %um\n", days, hours, mins);
-	i += sprintf(&str[i], "Compiled: " __TIMESTAMP__ "\n");
-	ESP_LOGD(TAG,"\nNumberOfTasks: %u, buf_size: %u, strlen: %u", num, buf_size, i);
 	if(len) *len = i;
 	return ptr;
 }
 
 void ble_device_name_set() {
 	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
-	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; static_assert(name_len >= 7);
+	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; //static_assert(name_len >= 7);
 	char* name = const_cast<char*>(ble_svc_gap_device_name());
 	*(name + name_len) = '-';
 	uint8_t mac[8]; CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
@@ -541,7 +540,7 @@ void wifi_hostname_set() {
 	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]);
 	esp_netif_set_hostname(h_netif_sta, name); // LWIP_LOCAL_HOSTNAME
 	const char* new_name = NULL; esp_netif_get_hostname(h_netif_sta, &new_name);
-	if(new_name) { ESP_LOGI(TAG, "hostname: %s", new_name); }
+	if(new_name) { ESP_LOGD(TAG, "hostname: %s", new_name); }
 }
 
 template <bool big_endian, char separ> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size) {
