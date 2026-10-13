@@ -107,7 +107,7 @@ extern ble_store_config_vars_t * ble_store_config_vars;
 //extern size_t ble_store_config_num_our_secs;
 //extern uint16_t ble_store_config_our_bond_count;
 
-extern uint16_t ble_store_peer_bond_count;
+//extern uint16_t ble_store_peer_bond_count;
 extern ble_store_t ble_store_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 extern size_t ble_store_num_peer_secs;
 #endif

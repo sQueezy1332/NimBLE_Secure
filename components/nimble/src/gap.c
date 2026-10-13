@@ -70,9 +70,9 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ble_connect_cb(event->connect.status);
 		break;
 	case BLE_GAP_EVENT_DISCONNECT: /* A connection was terminated, print connection descriptor */
-		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason);
+		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason); 
 		if(event->disconnect.reason == 0x0216) break; //Terminated By Local Host //0x0213 by remote device
-		return ble_disconnect_cb(event->disconnect.conn.conn_handle);
+		return ble_disconnect_cb(event->disconnect.conn.conn_handle); //(0x023D) (BLE_ERR_CONN_TERM_MIC)
 	case BLE_GAP_EVENT_CONN_UPDATE:
 #ifdef DEBUG_LOG
 		ESP_LOGI(TAG, "CONN_UPDATE status %d",event->conn_update.status);
@@ -127,7 +127,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 			ESP_LOGI(TAG, "connection encryption status: %d",event->enc_change.status); 
 		//7 BLE_HS_ENOTCONN 13 BLE_HS_ETIMEOUT
 		//1035 (0x40B) BLE_SM_ERR_DHKEY; 1288 (0x508) BLE_SM_ERR_PAIR_NOT_SUPP; 1281 (0x0501) Passkey Entry Failed
-			return ble_conn_encrypted_cb(event->enc_change.conn_handle);
+		return ble_conn_encrypted_cb(event->enc_change.conn_handle);
 		}  ESP_LOGW(TAG, "connection encryption status: %d",event->enc_change.status);
 		goto repeat; repeat: //break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 	case BLE_GAP_EVENT_REPEAT_PAIRING:

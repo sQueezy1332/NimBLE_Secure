@@ -36,7 +36,7 @@ typedef struct ble_store_nvs {
 	uint8_t ltk[16];
 	uint8_t irk[16];
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-   	uint16_t bond_count;
+   	//uint16_t bond_count;
 #endif
     uint16_t ediv;
     uint8_t key_size;

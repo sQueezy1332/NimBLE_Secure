@@ -54,7 +54,7 @@ static const char *TAG = "BLE_STORE";
 //uint16_t ble_store_config_our_bond_count;
 #endif
 
-BONDS_ATTR uint16_t ble_store_peer_bond_count;
+//BONDS_ATTR uint16_t ble_store_peer_bond_count;
 
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
 BONDS_ATTR ble_store_t ble_store_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
@@ -91,9 +91,10 @@ static int ble_store_config_write_peer_sec(const struct ble_store_value_sec *);
 static int ble_store_config_delete_peer_sec(const struct ble_store_key_sec *);
 
 int ble_store_compare_bond_count(const void *a, const void *b) {
-    const ble_store_t *sec_a = (ble_store_t *)a;
-    const ble_store_t *sec_b = (ble_store_t *)b;
-    return (sec_a->bond_count > sec_b->bond_count) - (sec_a->bond_count < sec_b->bond_count);
+    __unused const ble_store_t *sec_a = (ble_store_t *)a;
+    __unused const ble_store_t *sec_b = (ble_store_t *)b;
+    //return sec_a->bond_count - sec_b->bond_count;//return (sec_a->bond_count > sec_b->bond_count) - (sec_a->bond_count < sec_b->bond_count);
+	return 0;
 }
 
 /* This function gets the stored device records of OUR_SEC object type, arranges them in order of their bond count,
@@ -145,9 +146,9 @@ int ble_rearrange_peer_sec_nvs(void) //TODO
 		ESP_LOGE(TAG, "BLE_HS_ENOMEM");
 		return BLE_HS_ENOMEM;
 	}
-	ble_store_peer_bond_count = 0;
+	//ble_store_peer_bond_count = 0;
     memcpy(temp_secs, ble_store_peer_secs, temp_count * sizeof(*temp_secs));
-    qsort(temp_secs, temp_count, sizeof(*temp_secs), ble_store_compare_bond_count);
+    //qsort(temp_secs, temp_count, sizeof(*temp_secs), ble_store_compare_bond_count);
     for (size_t i = 0; i < temp_count; i++) {
         //union ble_store_key key;  ble_store_key_from_value_sec(&key.sec, &temp_secs[i]);
         err = ble_store_config_delete_peer_sec((struct ble_store_key_sec *)&temp_secs[i]);
@@ -159,9 +160,9 @@ int ble_rearrange_peer_sec_nvs(void) //TODO
     for (size_t i = 0; i < temp_count; i++) {
 		ble_store_peer_secs[i] = temp_secs[i];
 		size_t new_count =  i + 1;
-		ble_store_peer_bond_count = new_count; 
+		//ble_store_peer_bond_count = new_count; 
 		ble_store_num_peer_secs = new_count;
-		ble_store_peer_secs[i].bond_count = new_count;
+		//ble_store_peer_secs[i].bond_count = new_count;
     }
 	err = ble_store_persist_peer_secs();
 	if (err != ESP_OK) {
@@ -344,7 +345,7 @@ ble_store_config_read_peer_sec(const struct ble_store_key_sec *key_sec, struct b
     }
 	const ble_store_t *bond = &ble_store_peer_secs[idx];
     value_sec->peer_addr = bond->peer_addr;
-	value_sec->bond_count = bond->bond_count;
+	value_sec->bond_count = 0;//bond->bond_count;
 	value_sec->key_size = bond->key_size;
 	value_sec->ediv = bond->ediv;
 	value_sec->rand_num = bond->rand_num;
@@ -389,14 +390,15 @@ static int ble_store_config_write_peer_sec(const struct ble_store_value_sec *val
 	bond->irk_present = value_sec->irk_present;
 	bond->authenticated = value_sec->authenticated;
     bond->sc = value_sec->sc;
-	bond->bond_count = ++ble_store_peer_bond_count;
+	//bond->bond_count = ++ble_store_peer_bond_count;
 	memcpy(bond->ltk, value_sec->ltk, sizeof(bond->ltk));
 	memcpy(bond->irk, value_sec->irk, sizeof(bond->irk));
     /* Ensure entries are sorted at all times */
     //qsort(ble_store_peer_secs, ble_store_num_peer_secs, sizeof(ble_store_peer_secs[0]), ble_store_compare_bond_count);
-	if (unlikely(ble_store_peer_bond_count > (UINT16_MAX - 5))) {
-        rc = ble_rearrange_peer_sec_nvs();
-    } else { rc = ble_store_persist_peer_secs(); }; 
+	//if (unlikely(ble_store_peer_bond_count > (UINT16_MAX - 5))) {
+       // rc = ble_rearrange_peer_sec_nvs();
+   // } else 
+		rc = ble_store_persist_peer_secs(); 
     return rc;
 #else
     return BLE_HS_ENOENT;
@@ -838,25 +840,27 @@ static int ble_store_config_write_csfc(const struct ble_store_value_csfc *value_
  *
  * @return                      0 if a key was found; else BLE_HS_ENOENT.
  */
-int ble_store_config_read_hook(int obj_type, const union ble_store_key* key, union ble_store_value* value) {
+int ble_store_config_read_hook(int obj_type, const union ble_store_key* key, union ble_store_value* val) {
 	int rc;
 	switch (obj_type) {
 	case BLE_STORE_OBJ_TYPE_PEER_SEC: //BLE_HS_LOG(DEBUG, "looking up peer sec; "); ble_store_config_print_key_sec(&key->sec); BLE_HS_LOG(DEBUG, "\n");
-		rc = ble_store_config_read_peer_sec(&key->sec, &value->sec); break;
+		rc = ble_store_config_read_peer_sec(&key->sec, &val->sec); 
+			break;
 	case BLE_STORE_OBJ_TYPE_OUR_SEC: //BLE_HS_LOG(DEBUG, "looking up our sec; "); ble_store_config_print_key_sec(&key->sec); BLE_HS_LOG(DEBUG, "\n");
-		rc = ble_store_config_read_our_sec(&key->sec, &value->sec); break;
-	//case BLE_STORE_OBJ_TYPE_CCCD: return rc = ble_store_config_read_cccd(&key->cccd, &value->cccd);
-	//case BLE_STORE_OBJ_TYPE_CSFC: return rc = ble_store_config_read_csfc(&key->csfc, &value->csfc);
+		rc = ble_store_config_read_our_sec(&key->sec, &val->sec); //print_bond_data(&val->sec); 
+			break;
+	//case BLE_STORE_OBJ_TYPE_CCCD: return rc = ble_store_config_read_cccd(&key->cccd, &val->cccd);
+	//case BLE_STORE_OBJ_TYPE_CSFC: return rc = ble_store_config_read_csfc(&key->csfc, &val->csfc);
 #if MYNEWT_VAL(ENC_ADV_DATA)
 	case BLE_STORE_OBJ_TYPE_ENC_ADV_DATA:
-		rc =  ble_store_config_read_ead(&key->ead, &value->ead); break;
+		rc =  ble_store_config_read_ead(&key->ead, &val->ead); break;
 #endif 
-	//case BLE_STORE_OBJ_TYPE_PEER_ADDR: return rc = ble_store_config_read_rpa_rec(&key->rpa_rec, &value->rpa_rec);
+	//case BLE_STORE_OBJ_TYPE_PEER_ADDR: return rc = ble_store_config_read_rpa_rec(&key->rpa_rec, &val->rpa_rec);
 	case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
-		rc = ble_store_config_read_local_irk(&key->local_irk, &value->local_irk); break;
+		rc = ble_store_config_read_local_irk(&key->local_irk, &val->local_irk); break;
 	default: rc = BLE_HS_ENOTSUP;
-	} ESP_LOGI(TAG, "%s obj_type %u %s", "read", 
-		obj_type, rc == BLE_HS_ENOTSUP ? "\tENOTSUP" : rc == 0 ? "+" : "-");
+	} ESP_LOGI(TAG, "read obj_type %u %s idx %u", 
+		obj_type, rc == BLE_HS_ENOTSUP ? "\tENOTSUP" : rc == 0 ? "+" : "-", key->sec.idx);
 	return rc;
 }
 
@@ -885,7 +889,7 @@ int ble_store_config_write_hook(int obj_type, const union ble_store_value* val) 
 	case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
 		rc = ble_store_config_write_local_irk(&val->local_irk); break;
 	default: rc = BLE_HS_ENOTSUP;
-	} ESP_LOGI(TAG, "%s obj_type %u %s", "write", 
+	} ESP_LOGI(TAG, "write obj_type %u %s", 
 		obj_type, rc == BLE_HS_ENOTSUP ? "\tENOTSUP" : rc == 0 ? "+" : "-");
 	return rc;
 }

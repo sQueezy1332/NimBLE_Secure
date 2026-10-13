@@ -31,7 +31,6 @@ extern "C" void app_main() { {
 	nvs_log();
 	xTaskCreate(usb_cdc_task, "cdc", 4096, NULL, 5, NULL);
 	//nvs_erase_all(nvsApi(NVS_SPACE_WIFI, NVS_READWRITE));
-	//nvs_erase_all(nvsApi(NVS_SPACE_NIMBLE, NVS_READWRITE)); 
 	//vTaskPrioritySet(NULL, 10);
 	//auto heart = esp_timer_new([](void*){ digitalToggle(12);}); esp_timer_start_periodic(heart, HEART_RATE_PERIOD);
 #endif
@@ -378,8 +377,7 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 		break;
 	case NVS_ERASE_ALL: nvsEraseAll(nullptr);
 		break;
-	case NVS_ERASE_ALL_EXC: nvsEraseAll("phy");
-		break;
+	//case NVS_ERASE_ALL_EXC: nvsEraseAll("phy"); break;
 	case BLE_STORE_CLEAR: ble_delete_all_bonds();
 		break;
 	case OFFSET: print_task_list(); break;
@@ -436,9 +434,7 @@ void timer_patch_off_cb(void *) {
 
 int ble_delete_all_bonds() {
 #if MYNEWT_VAL_BLE_STORE_MAX_BONDS
-	nvsApi nimble_nvs(NVS_SPACE_NIMBLE, NVS_READWRITE);
-	CHECK_RET(nvs_erase_all(nimble_nvs));
-	return 0;
+	return nvs_erase_all(nvsApi(NVS_SPACE_NIMBLE, NVS_READWRITE)); 
 #endif
 return ENOTSUP;
 }

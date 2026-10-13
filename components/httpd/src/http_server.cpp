@@ -181,6 +181,31 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
 esp_err_t http_server_init(void) {
 	httpd_uri_t handlers [] = {
 		{
+			.uri = "/",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t* req) {
+				struct httpd_data* hd = (struct httpd_data*)req->handle;
+				const auto max_handlers = hd->config.max_uri_handlers;
+				const auto str_cap = max_handlers * 32; size_t len = 0;
+				std::unique_ptr<char[]>buf(new char[str_cap]); if(!buf) return -1;
+				for (size_t i = 0; i < max_handlers; i++) {
+					httpd_uri_t *handler = hd->hd_calls[i];
+					len += sprintf(&buf[len], "#%u  \"%s\"\t", i+1, handler->uri); 
+					httpd_method_t method = handler->method;
+					if(method == HTTP_GET) {
+						len += sprintf(&buf[len], "%s\n", "HTTP_GET");
+					} else if(method == HTTP_POST){
+						len += sprintf(&buf[len], "%s\n", "HTTP_POST");
+					} else {
+						len += sprintf(&buf[len], "Method %d\n", handler->method);
+					}
+				}
+				ESP_LOGI(TAG, "%s len = %u, strlen = %u", req->uri, len);
+				ESP_LOGD(TAG, "%.*s", len, buf.get());
+				return httpd_resp_send_text(req, buf.get(), len);
+			}
+		},
+		{
 			.uri = "/update",
 			.method = HTTP_GET,
 			.handler = [](httpd_req_t *req) { 
@@ -266,31 +291,6 @@ esp_err_t http_server_init(void) {
 				return httpd_resp_send_text(req, req->uri);
 			},
 		},
-		{
-			.uri = "/help",
-			.method = HTTP_GET,
-			.handler = [](httpd_req_t* req) {
-				struct httpd_data* hd = (struct httpd_data*)req->handle;
-				const auto max_handlers = hd->config.max_uri_handlers;
-				const auto str_cap = max_handlers * 32; size_t len = 0;
-				std::unique_ptr<char[]>buf(new char[str_cap]); if(!buf) return -1;
-				for (size_t i = 0; i < max_handlers; i++) {
-					httpd_uri_t *handler = hd->hd_calls[i];
-					len += sprintf(&buf[len], "#%u  \"%s\"\t", i+1, handler->uri); 
-					httpd_method_t method = handler->method;
-					if(method == HTTP_GET) {
-						len += sprintf(&buf[len], "%s\n", "HTTP_GET");
-					} else if(method == HTTP_POST){
-						len += sprintf(&buf[len], "%s\n", "HTTP_POST");
-					} else {
-						len += sprintf(&buf[len], "Method %d\n", handler->method);
-					}
-				}
-				ESP_LOGI(TAG, "%s len = %u, strlen = %u", req->uri, len);
-				ESP_LOGD(TAG, "%.*s", len, buf.get());
-				return httpd_resp_send_text(req, buf.get(), len);
-			}
-		}
 		/*{
     		.uri       = "/basic_auth";
     		.method    = HTTP_GET;
