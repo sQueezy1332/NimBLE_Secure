@@ -70,7 +70,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ble_connect_cb(event->connect.status);
 		break;
 	case BLE_GAP_EVENT_DISCONNECT: /* A connection was terminated, print connection descriptor */
-		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason); 
+		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason);
 		if(event->disconnect.reason == 0x0216) break; //Terminated By Local Host //0x0213 by remote device
 		return ble_disconnect_cb(event->disconnect.conn.conn_handle); //(0x023D) (BLE_ERR_CONN_TERM_MIC)
 	case BLE_GAP_EVENT_CONN_UPDATE:
@@ -82,7 +82,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 #endif
 		return 0;
 	case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
-		ESP_LOGI(TAG, "PHY_UPDATE_COMPLETE" " %u; conn_handle %u, rx_phy %u, tx_phy %u",
+		ESP_LOGI(TAG, "PHY_UPDATE_COMPLETE = " " %u; conn_handle %u, rx_phy %u, tx_phy %u",
 			event->phy_updated.status, event->phy_updated.conn_handle, event->phy_updated.rx_phy, event->phy_updated.tx_phy);
 		break;
 	case BLE_GAP_EVENT_DISC_COMPLETE:
@@ -157,19 +157,23 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	//case BLE_GAP_EVENT_PERIODIC_SYNC: print_event_report(event->periodic_sync); break;
 	//case BLE_GAP_EVENT_PERIODIC_REPORT: print_event_report(event->periodic_report); break;
 	//case BLE_GAP_EVENT_PERIODIC_SYNC_LOST: print_event_report(event->periodic_sync_lost); break;
-	case BLE_GAP_EVENT_LINK_ESTAB: ESP_LOGI(TAG, "LINK_ESTAB"); break;
-	case BLE_GAP_EVENT_DATA_LEN_CHG: ESP_LOGI(TAG, "DATA_LEN_CHG"); break;
-	case BLE_GAP_EVENT_CONN_UPDATE_REQ: ESP_LOGI(TAG, "CONN_UPDATE_REQ"); break;
-	case BLE_GAP_EVENT_PARING_COMPLETE: ESP_LOGI(TAG, "PARING_COMPLETE"); break;
-	case BLE_GAP_EVENT_IDENTITY_RESOLVED: ESP_LOGI(TAG, "IDENTITY_RESOLVED");break;
-	case BLE_GAP_EVENT_AUTHORIZE: ESP_LOGI(TAG, "AUTHORIZE"); break;
+	case BLE_GAP_EVENT_DATA_LEN_CHG:
+		ESP_LOGD(TAG, "DATA_LEN_CHG handle %u, tx_octets %u, tx_time %u, rx_octets %u, rx_time %u", 
+		event->data_len_chg.conn_handle, 
+		event->data_len_chg.max_tx_octets, event->data_len_chg.max_tx_time,
+		event->data_len_chg.max_rx_octets, event->data_len_chg.max_rx_time);
+		break;
+	case BLE_GAP_EVENT_LINK_ESTAB: ESP_LOGD(TAG, "LINK_ESTAB"); break;
+	case BLE_GAP_EVENT_CONN_UPDATE_REQ: ESP_LOGD(TAG, "CONN_UPDATE_REQ"); break;
+	case BLE_GAP_EVENT_PARING_COMPLETE: ESP_LOGD(TAG, "PARING_COMPLETE"); break;
+	case BLE_GAP_EVENT_IDENTITY_RESOLVED: ESP_LOGD(TAG, "IDENTITY_RESOLVED");break;
+	case BLE_GAP_EVENT_AUTHORIZE: ESP_LOGD(TAG, "AUTHORIZE"); break;
 	default: ESP_LOGW(TAG, "event->type %u",event->type);
 	}
 	return ESP_OK;
 }
 
-void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
-	const uint8_t instance = 0;
+void adv_init(uint8_t instance, uint16_t field, uint32_t duration_units, bool legacy) {
 	if(ble_gap_ext_adv_active(instance)) return;
 	//const ble_uuid32_t uuid32 = BLE_UUID32_INIT(generate_uuid32());
 	__unused const ble_uuid16_t uuid16 = BLE_UUID16_INIT(field);
@@ -196,20 +200,20 @@ void adv_init(uint16_t field, uint32_t duration_units, bool legacy) {
 	}; __unused int8_t tx_pwr;
 #if NIMBLE_BLE_ADVERTISE && MYNEWT_VAL_BLE_EXT_ADV
 	struct ble_gap_ext_adv_params ext_adv_cfg = {
-	.connectable = 1, .scannable = legacy,
-	.directed = 0, .high_duty_directed = 0,
-	.legacy_pdu = legacy, .anonymous = 0,
-	.include_tx_power = !legacy, .scan_req_notif = 0,
-	.itvl_min = BLE_GAP_ADV_ITVL_MS(500),
-	.itvl_max = BLE_GAP_ADV_ITVL_MS(515),
-	.channel_map = 0,
-	.own_addr_type = own_addr_type, //not random
-	.peer = {}, .filter_policy = 0,
-	.primary_phy = BLE_HCI_LE_PHY_CODED,
-	.secondary_phy = BLE_HCI_LE_PHY_CODED,
-	.tx_power = 21,
+		.connectable = 1, .scannable = legacy,
+		.directed = 0, .high_duty_directed = 0,
+		.legacy_pdu = legacy, .anonymous = 0,
+		.include_tx_power = !legacy, .scan_req_notif = 0,
+		.itvl_min = BLE_GAP_ADV_ITVL_MS(500),
+		.itvl_max = BLE_GAP_ADV_ITVL_MS(515),
+		.channel_map = 0,
+		.own_addr_type = own_addr_type, //not random
+		.peer = {}, .filter_policy = 0,
+		.primary_phy = BLE_HCI_LE_PHY_CODED,
+		.secondary_phy = BLE_HCI_LE_PHY_CODED,
+		.tx_power = 21,
 	};
-	int ret = ble_gap_ext_adv_configure(0, &ext_adv_cfg, &tx_pwr,gap_event_handler, NULL);
+	int ret = ble_gap_ext_adv_configure(0, &ext_adv_cfg, &tx_pwr, gap_event_handler, NULL);
 	if(unlikely(ret == BLE_HS_ENOMEM || ret == BLE_HS_EBUSY)) { return; }
 	else { ESP_ERROR_CHECK(ret); }  //log internal
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */

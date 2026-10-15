@@ -33,7 +33,7 @@ __weak_symbol int get_wifi_rssi() { return -1;}
 
 extern uint8_t scan_key[32]; extern uint8_t pass_key[32];
 extern uint8_t pass_key_len, scan_key_len;
-extern uint32_t wifi_is_connected();
+extern "C" uint32_t wifi_is_connected();
 extern size_t strtoB(const char* src, uint8_t *dest, size_t buf_len);
 
 extern esp_err_t auth_data_save();
@@ -102,7 +102,7 @@ static esp_err_t update_post_handler(httpd_req_t *req) {
 			ret, ota_partition->label, ota_partition->size, ota_partition->address, req->content_len);
 			auto timer = micros(); //pdTICKS_TO_MS(xTaskGetTickCount() - started),
 			size_t delta = (timer - started) / 1000ul;
-			len += sprintf(&buf[len],"\nThe update took %u ms\nSpeed: %u kbyte/s", delta, (size_t)req->content_len / delta);
+			len += sprintf(&buf[len],"\nUpdate took %u ms\nSpeed: %u kbyte/s", delta, (size_t)req->content_len / delta);
 			(void)ota_handle.release();
 			ESP_LOGI(TAG, "%.*s", len, buf);
 			return httpd_resp_send_text(req, buf, len);
@@ -178,6 +178,16 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
     return httpd_resp_send_text(req, log, i);
 }
 
+esp_err_t chunked_text_handler(httpd_req_t* req)
+{
+	httpd_resp_set_status(req, HTTPD_200);
+	httpd_resp_set_type(req, "text/plain");
+	//httpd_resp_send_chunk(req, chunk1, HTTPD_RESP_USE_STRLEN);
+	httpd_resp_send_chunk(req, NULL, 0);
+
+	return ESP_OK;
+}
+
 esp_err_t http_server_init(void) {
 	httpd_uri_t handlers [] = {
 		{
@@ -201,7 +211,7 @@ esp_err_t http_server_init(void) {
 					}
 				}
 				ESP_LOGI(TAG, "%s len = %u, strlen = %u", req->uri, len);
-				ESP_LOGD(TAG, "%.*s", len, buf.get());
+				ESP_LOGD(TAG, "%s", buf.get());
 				return httpd_resp_send_text(req, buf.get(), len);
 			}
 		},

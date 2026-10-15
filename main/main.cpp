@@ -8,7 +8,7 @@ extern "C" void app_main() { {
 #endif
 	if (img_state_get() == ESP_OTA_IMG_PENDING_VERIFY) {
 		h_timer_img_valid = esp_timer_new([](void*) IRAM_ATTR { 
-			ESP_DRAM_LOGW(TMR, "OTA_VALID EXPIRED"); esp_restart();}, NULL, ESP_TIMER_ISR);
+			ESP_DRAM_LOGW(TAG, "OTA_VALID EXPIRED"); esp_restart();}, NULL, ESP_TIMER_ISR);
 		ESP_ERROR_CHECK(esp_timer_start(h_timer_img_valid, TIMER_OTA_VALID));
 	}
 	nvs_init();
@@ -69,7 +69,7 @@ extern "C" void app_main() { {
 void mainTask(void *) {
 	h_main_task = xTaskGetCurrentTaskHandle();
 #ifdef	DEBUG_ENABLE
-	printHeapInfo(); //ble_store_clear();
+	printHeapInfo();
 	print_task_list();
 	DEBUG_LED(0);
 #endif
@@ -141,7 +141,7 @@ void bluetooth_init() {
 void wifi_init() {
 	wifi_setup_default(WIFI_STORAGE_RAM);
 #ifndef CONFIG_DOMOPHONE
-	h_timer_wifi = esp_timer_new([](void*) { ESP_DRAM_LOGI(TMR, "\"WIFI\" FreeHeap %lu", getFreeHeap()); esp_restart(); 
+	h_timer_wifi = esp_timer_new([](void*) { ESP_DRAM_LOGI(TAG, "\"WIFI\" FreeHeap %lu", getFreeHeap()); esp_restart(); 
 	}, NULL, ESP_TIMER_ISR);
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
 	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
@@ -352,10 +352,10 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 		RSSI_THERSHOLD
 	};
 	if(buf->om_len > 6)  { 
-		ESP_LOGW(TAG, "!om_len"); return BLE_HS_EMSGSIZE; 
+		ESP_LOGW(TAG, "!om_len"); return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN; 
 	}
 	if(*reinterpret_cast<uint32_t*>(buf->om_data) != DEF_CMD_PASS) { 
-		ESP_LOGW(TAG, "!pass"); return BLE_HS_EAUTHOR; 
+		ESP_LOGW(TAG, "!pass"); return BLE_ATT_ERR_INSUFFICIENT_AUTHOR; 
 	}
 	uint8_t val = buf->om_data[4];
 	switch (val) {
@@ -433,10 +433,7 @@ void timer_patch_off_cb(void *) {
 }
 
 int ble_delete_all_bonds() {
-#if MYNEWT_VAL_BLE_STORE_MAX_BONDS
 	return nvs_erase_all(nvsApi(NVS_SPACE_NIMBLE, NVS_READWRITE)); 
-#endif
-return ENOTSUP;
 }
 #ifdef CONFIG_DOMOPHONE
 void check_distance_by_rssi() {
@@ -727,3 +724,28 @@ void nvsEraseAll(const char *except) {
 	}
 	nvs_release_iterator(it);
 }
+/*
+void print_bond_data(const struct ble_store_value_sec *val) {
+	extern const char* format_addr(const uint8_t *addr);
+	NIMLOG("peer address: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
+	NIMLOG("\nkey_size %u", val->key_size);
+	if(val->ediv) {
+		NIMLOG("\nediv %u", val->ediv);
+	}
+	if(val->rand_num) {
+		NIMLOG("\nrand_num 0x%08X", ((size_t*)&val->rand_num)[1]); 
+		NIMLOG("%08X", ((size_t*)&val->rand_num)[0]);
+	}	
+	if(val->ltk_present) {
+		NIMLOG("\nLTK:\t");
+		for (size_t i = 0; i < sizeof(val->ltk); ++i) { NIMLOG("%02X", val->ltk[i]);} 
+	}
+	if(val->irk_present) {
+		NIMLOG("\nIRK:\t");
+		for (size_t i = 0; i < sizeof(val->irk); ++i) { NIMLOG("%02X", val->irk[i]);} 
+	}
+	if(val->sign_counter) {
+		NIMLOG("\nsign_counter %u", (size_t)val->sign_counter);
+	}
+	NIMLOG("\nauthenticated %u, sc %u\n", val->authenticated, val->sc);
+}*/

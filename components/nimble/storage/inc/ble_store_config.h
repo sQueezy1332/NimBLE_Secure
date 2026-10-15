@@ -35,9 +35,6 @@ typedef struct ble_store_nvs {
 	uint64_t rand_num;
 	uint8_t ltk[16];
 	uint8_t irk[16];
-#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-   	//uint16_t bond_count;
-#endif
     uint16_t ediv;
     uint8_t key_size;
 	uint8_t ltk_present:1;
@@ -46,6 +43,9 @@ typedef struct ble_store_nvs {
 	//uint8_t csrk_present:1;
 	uint8_t authenticated:1; //unsigned
 	uint8_t sc:1;
+#if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
+   	uint16_t bond_count;
+#endif
 	//uint32_t sign_counter; //without enc
 } ble_store_t;
 

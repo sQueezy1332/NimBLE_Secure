@@ -5,6 +5,9 @@
 #define _WANT_USE_LONG_TIME_T
 				//#define CONFIG_ADC_LINE
 				#define CONFIG_DOMOPHONE
+#if !CONFIG_SECURE_BOOT
+				#define DEBUG_ENABLE
+#endif
 #include "ESP_MAIN.h"
 #include "driver/gpio.h"
 #include "esp_random.h"
@@ -28,7 +31,8 @@ static const char* TAG = "MAIN";
 	#include "led.h"
 	#define DEBUG_LED(...) led_set(__VA_ARGS__)
 	#define DEBUG_LED_GET() get_led_state()
-#else 
+#else
+	#message "RELEASE"
 	#define DEBUG_LED_GET() (0)
 	#define DEBUG_LED(...)
 	static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_BT_NIMBLE_LOG_LEVEL_NONE); 
@@ -39,9 +43,8 @@ static const char* TAG = "MAIN";
 #endif
 #define TIMER_WIFI      (MINS * 15)
 #define TIMER_OTA_VALID (MINS * 15)
-#define TIMER_CHECK_RSSI (1000 * 300)
+#define TIMER_CHECK_RSSI (1000 * 255)
 
-#define TMR "TMR"
 #define HEART_RATE_PERIOD (2000 * 1000)
 #define dWrite(x,y) digitalWrite(x, y)
 #define dRead(x) digitalRead(x)
@@ -132,9 +135,8 @@ static void patch_timer(uint64_t = TIMER_PATCH);
 static void IRAM_ATTR timer_patch_off_cb(void *);
 //__unused static void nimble_host_task(void *);
 extern void set_cts_unix(time_t now);
-extern void adv_init(uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = true);
-	
 #ifndef CONFIG_DOMOPHONE
+extern void adv_init(uint16_t field = HID_SVC, uint32_t duration_units = TIME_ADV_UNITS, bool legacy = false);
 void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) { };
 void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*) { };
 void wifi_disconnected_cb(wifi_event_sta_disconnected_t*) { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
@@ -144,6 +146,7 @@ void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
 void ble_scan_complete_cb() { ble_scan_init(); }
 void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
 #else
+extern void adv_init(uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = 0);
 void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/  } 
 void ota_update_end_cb() { adv_init(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/  }
 int get_wifi_rssi() { int r; if(!esp_wifi_sta_get_rssi(&r)) { return r; } return -1; }
@@ -205,7 +208,7 @@ uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
 std::unique_ptr<char[]> task_list(size_t* len = nullptr);
-void print_task_list() { __unused size_t len = 0; DEBUGF("%.*s", len, task_list(&len).get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+void print_task_list() { __unused size_t len = 0; DEBUGF("%s", task_list(&len).get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
 #if CONFIG_HEAP_USE_HOOKS
@@ -229,9 +232,9 @@ void set_main_partition() { write_noinit_ota(0); }
 inline void totp_test() {
 	uint8_t buf[64]; char str[64];
 	const int len = base32_decode(DEF_BLE_PASS, buf, sizeof(buf));
-	DEBUGF("base32_decode()\n");
+	ESP_LOGD(TAG, "base32_decode()");
 	for (size_t i = 0; i < len; i++) { DEBUGF("0x%02X, ", buf[i]); }
-	DEBUGLN(); ESP_LOGD(TAG,"length %d\n", len);
+	DEBUGLN(); ESP_LOGD(TAG,"length %d", len);
 	if (len > 0) {
 		__unused const time_t now = 12345678;
 		const uint32_t totp = TOTPget(buf, len, now);

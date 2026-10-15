@@ -38,7 +38,7 @@ static uint16_t h_spp_chr;
 __unused static uint16_t h_heart_chr;
 
 static handle_mask_t subs_io, __unused subs_spp, __unused subs_heart;
-static handle_mask_t conn_encrypted;
+static handle_mask_t conn_mask;
 
 const uint16_t MAX_HANDLE = sizeof(handle_mask_t) * 8; //2 + MYNEWT_VAL_BLE_MAX_CONNECTIONS;
 static_assert(1 + MYNEWT_VAL_BLE_MAX_CONNECTIONS < sizeof(handle_mask_t) * 8);
@@ -180,21 +180,21 @@ int clear_connection(uint16_t h_conn) {
 #ifdef HEART_RATE_CHR
 	handle_write(subs_heart, h_conn, 0);
 #endif
-	handle_write(conn_encrypted, h_conn, 0);
+	handle_write(conn_mask, h_conn, 0);
 	return 0;
 }
 
 int set_encryption(uint16_t h_conn) {
 	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	handle_write(conn_encrypted, h_conn, 1); return 0;
+	handle_write(conn_mask, h_conn, 1); return 0;
 }
 
 int is_encrypted(uint16_t h_conn) {
 	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	return handle_read(conn_encrypted, h_conn);
+	return handle_read(conn_mask, h_conn);
 }
 
-handle_mask_t get_conn_encrypted() { return conn_encrypted; }
+handle_mask_t get_conn_encrypted() { return conn_mask; }
 
 handle_mask_t need_notify_io() { return subs_io; }
 
@@ -226,7 +226,7 @@ int gatt_svr_subscribe_cb(const struct ble_gap_event *event) {
 	if (!is_encrypted(h_conn)) {
 		ESP_LOGW(TAG, "connection not encrypted!");
 		return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
-	} ESP_LOGD(TAG, "conn_encrypted 0x%04x", conn_encrypted);
+	} ESP_LOGD(TAG, "conn_mask 0x%04x", conn_mask);
 	uint8_t notify = event->subscribe.cur_notify | event->subscribe.cur_indicate;
 #ifdef AUTO_IO_CHR
 	if(attr_handle == h_io_chr) { handle_write(subs_io, h_conn, notify); return 0; }

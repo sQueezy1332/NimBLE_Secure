@@ -22,13 +22,17 @@ extern EventGroupHandle_t h_group_wifi;
 extern esp_event_handler_instance_t h_event_wifi, h_event_ip;
 extern esp_netif_t* h_netif_sta;
 extern esp_netif_t* h_netif_ap;
-
+#ifdef __cplusplus
+extern "C" {
 void wifi_setup_default(wifi_storage_t = WIFI_STORAGE_RAM);
-
 esp_err_t wifi_init_sta(const char* ssid, const char* pass, uint8_t channel = 0, wifi_bandwidth_t = WIFI_BW20);
-
-esp_err_t wifi_init_ap(const char* ssid = CONFIG_IDF_TARGET, const char* pass = NULL, 
+esp_err_t wifi_init_ap(const char* ssid = CONFIG_IDF_TARGET, const char* pass = NULL,
 	uint8_t channel = 0, uint8_t max_conn = 3, bool hidden = 0, int8_t power = 80, wifi_bandwidth_t = WIFI_BW20);
+#else
+void wifi_setup_default(wifi_storage_t);
+esp_err_t wifi_init_sta(const char*, const char*, uint8_t, wifi_bandwidth_t);
+esp_err_t wifi_init_ap(const char* ssid, const char*, uint8_t, uint8_t, bool, int8_t, wifi_bandwidth_t);
+#endif
 
 void ap_set_dns_addr(esp_netif_t *ap,esp_netif_t *sta);
 
@@ -39,3 +43,7 @@ const char* print_ip(uint32_t addr);
 uint32_t wifi_is_connected();
 
 int wifi_ap_get_sta_num();
+
+#ifdef __cplusplus
+}
+#endif

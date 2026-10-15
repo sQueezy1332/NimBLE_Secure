@@ -40,10 +40,8 @@
 			xhr.send(file)
 		}
 		function reboot() {
-			if (confirm("Reboot ESP?")) {
-				fetch("/restart")
-					.catch(err => alert(err.message));
-			}
+			fetch("/restart")
+				.catch(err => alert(err.message));
 		}
 		</script>
 	</head>

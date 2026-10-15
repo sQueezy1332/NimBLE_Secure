@@ -232,10 +232,30 @@ static int get_nvs_db_value(const char* key_string, void* val)
 */
 static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, size_t num_value)
 {
-	uint8_t buf[96]; uint8_t* const pbuf = value ? buf : NULL;
+	uint8_t buf[96]; uint8_t* pbuf;
 	char* end_str = pkey + strlen(pkey);
-	int ret; size_t count = 0;
-	size_t obj_size = get_expected_size_for_obj_by_key(pkey);
+	int ret; size_t count = 0, obj_size, field_size;
+	if(value) { 
+		obj_size = get_expected_size_for_obj_by_key(pkey); 
+#if MYNEWT_VAL(BLE_HOST_BASED_PRIVACY)
+		if (compare_str(pkey, NIMBLE_NVS_PEER_RECORDS_KEY)){
+			pbuf = &((struct ble_hs_dev_records*)buf)->peer_sec;
+			value = &((struct ble_hs_dev_records*)value)->peer_sec;
+			field_size = sizeof(struct ble_hs_peer_sec);
+		} else
+#endif
+#if MYNEWT_VAL(ENC_ADV_DATA)
+		if (compare_str(pkey, NIMBLE_NVS_EAD_SEC_KEY)) {
+			pbuf = &((struct ble_hs_dev_records*)buf)->peer_sec;
+			value = &((struct ble_store_value_ead*)value)->peer_addr;
+			field_size = sizeof(ble_addr_t);
+		} else
+#endif
+		{
+			pbuf = buf;
+			field_size = obj_size;
+		}
+	} else { pbuf = NULL; }
 	size_t max_limit = get_nvs_max_obj_value_by_key(pkey);
 	for (size_t i = 1; i <= max_limit; i++) {
 		set_nvs_key_index(end_str, i);
@@ -250,23 +270,7 @@ static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, s
 			count++;
 			// If user has provided value, then the purpose is to find non-matching entry from NVS
 			if (value) {
-#if MYNEWT_VAL(BLE_HOST_BASED_PRIVACY)
-				if (compare_str(pkey, NIMBLE_NVS_PEER_RECORDS_KEY)){
-					struct ble_hs_dev_records* recs = value;
-					ret = get_nvs_matching_index(&((struct ble_hs_dev_records*)pbuf)->peer_sec, &recs->peer_sec, num_value, 
-					obj_size, sizeof(recs->peer_sec));
-				} else
-#endif
-#if MYNEWT_VAL(ENC_ADV_DATA)
-                if (compare_str(pkey, NIMBLE_NVS_EAD_SEC_KEY)) {
-					struct ble_store_value_ead* eads = value;
-					ret = get_nvs_matching_index(&((struct ble_hs_dev_records*)pbuf)->peer_addr, &eads->peer_addr, num_value, 
-					obj_size, sizeof(eads->peer_addr));
-				} else
-#endif
-				{
-					ret = get_nvs_matching_index(pbuf, value, num_value, obj_size, obj_size);
-				}
+				ret = get_nvs_matching_index(pbuf, value, num_value, obj_size, field_size);
 				//If found non-matching/odd entry of NVS with entries in theinternal database, return NVS index so can be deleted 
 				if (ret == -1 && !empty) {
 					return i;
@@ -274,7 +278,7 @@ static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, s
 			}
 		} else {
 			ESP_ERROR_CHECK_WITHOUT_ABORT(ret);
-			ESP_LOGE(TAG, "read operation failed while fetching size");
+			//ESP_LOGE(TAG, "read operation failed while fetching size");
 			return -1;
 		}
 	}
@@ -283,7 +287,8 @@ static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, s
 			*end_str = '\0';
 			return count;
 		}
-		return -1; // No non-matching entry found
+		ESP_LOGW(TAG, "No non-matching entry found %s", pkey);
+		return -1;
 	}
 	return (max_limit + 1);
 }
@@ -364,7 +369,7 @@ static int populate_db_from_nvs(const char* key, void* restrict db_item, size_t*
 	size_t item_size = get_expected_size_for_obj_by_key(key);
 	for (size_t i = 1; i <= max_entries; i++) {
 		if (*db_num >= max_entries) {
-			ESP_LOGW(TAG, "%s%s", key_string, ": RAM array full, break");
+			ESP_LOGW(TAG, "%s RAM array full, break", key_string);
 			break;
 		}
 		set_nvs_key_index(end_str, i);
@@ -372,9 +377,10 @@ static int populate_db_from_nvs(const char* key, void* restrict db_item, size_t*
 		if (ret == ESP_ERR_NVS_NOT_FOUND) {
 			continue;
 		} else if (ret != ESP_OK) {
+			ESP_LOGE(TAG, "populate failed for %s", key);
 			ESP_ERROR_CHECK_WITHOUT_ABORT(ret);
 			return -1;
-		} else { ESP_LOGD(TAG, "%s%s", key_string, " is filled up"); }
+		} else { ESP_LOGD(TAG, "%s filled up", key_string); }
 		memcpy(db_item, buf, item_size);
 		db_item += item_size;
 		++(*db_num);
@@ -389,18 +395,11 @@ static int ble_nvs_restore_sec_keys(void)
 {
 	int ret;
 #if MYNEWT_VAL(BLE_STORE_MAX_BONDS)
-	/*err = populate_db_from_nvs(NIMBLE_NVS_OUR_SEC_KEY, ble_store_config_our_secs, &ble_store_config_num_our_secs);
-	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'our sec'");
-		return err;
-	}
-	ESP_LOGD(TAG, "ble_store_config_our_secs restored %d bonds", ble_store_config_num_our_secs);*/
-
+	/*ret = populate_db_from_nvs(NIMBLE_NVS_OUR_SEC_KEY, ble_store_config_our_secs, &ble_store_config_num_our_secs);
+	if (ret != ESP_OK) { return ret; }
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_OUR_SEC_KEY, ble_store_config_num_our_secs);*/
 	ret = populate_db_from_nvs(NIMBLE_NVS_PEER_SEC_KEY, ble_store_peer_secs, &ble_store_num_peer_secs);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'peer sec'");
-		return ret;
-	}
+	if (ret != ESP_OK) { return ret; }
 	/* Only check for out-of-order entries if we have valid data */
 	/*if (//ble_store_config_num_our_secs > 1 || 
 		 ble_store_num_peer_secs > 1) {
@@ -422,57 +421,40 @@ static int ble_nvs_restore_sec_keys(void)
 		//qsort(ble_store_config_our_secs, ble_store_config_num_our_secs, sizeof(struct ble_store_nvs), ble_store_compare_bond_count);
 		//qsort(ble_store_peer_secs, ble_store_num_peer_secs, sizeof(struct ble_store_nvs), ble_store_compare_bond_count);
 	}
-
 	// Only access array if we have valid entries to prevent index -1 access
 	//if (ble_store_config_num_our_secs > 0) { ble_store_config_our_bond_count = ble_store_config_our_secs[ble_store_config_num_our_secs - 1].bond_count;
 	//} else { ble_store_config_our_bond_count = 0; }
-	if (ble_store_num_peer_secs > 0) {
-		//ble_store_peer_bond_count = ble_store_peer_secs[ble_store_num_peer_secs - 1].bond_count;
-	} else {
-		//ble_store_peer_bond_count = 0;
-	}
+	//if (ble_store_num_peer_secs > 0) { //ble_store_peer_bond_count = ble_store_peer_secs[ble_store_num_peer_secs - 1].bond_count; 
+	//} else { ble_store_peer_bond_count = 0;}
 	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_PEER_SEC_KEY, ble_store_num_peer_secs);
 #endif
 
 #if MYNEWT_VAL(BLE_STORE_MAX_CCCDS)
 	ret = populate_db_from_nvs(NIMBLE_NVS_CCCD_SEC_KEY, ble_store_config_cccds, &ble_store_config_num_cccds);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'CCCD'");
-		return ret;
-	}
-	ESP_LOGD(TAG, "ble_store_config_cccds restored %d bonds", ble_store_config_num_cccds);
+	if (ret) { return ret; }
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_CCCD_SEC_KEY, ble_store_config_num_cccds);
 #endif
 /*
 #if MYNEWT_VAL(BLE_STORE_MAX_CSFCS)
 	ret = populate_db_from_nvs(NIMBLE_NVS_CSFC_SEC_KEY, ble_store_config_csfcs, &ble_store_config_num_csfcs);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'CSFC'");
-		return ret;
-	}
-	ESP_LOGD(TAG, "ble_store_config_csfcs restored %d bonds", ble_store_config_num_csfcs);
+	if (ret) { return ret; }
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_CSFC_SEC_KEY, ble_store_config_num_csfcs);
 #endif
 */
 #if MYNEWT_VAL(ENC_ADV_DATA)
 	ret = populate_db_from_nvs(NIMBLE_NVS_EAD_SEC_KEY, ble_store_config_eads, &ble_store_config_num_eads);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'EAD'");
-		return ret;
-	}
-	ESP_LOGD(TAG, "ble_store_config_eads restored %d bonds", ble_store_config_num_eads);
+	if (ret) { return ret; }
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_EAD_SEC_KEY, ble_store_config_num_eads);
 #endif
 	size_t ble_store_num_local_irks = 0;
 	ret = populate_db_from_nvs(NIMBLE_NVS_LOCAL_IRK_KEY, ble_store_local_irk, &ble_store_num_local_irks);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'Local IRK'");
-		return ret;
-	}
+	if (ret) { return ret; }
 	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_LOCAL_IRK_KEY, ble_store_num_local_irks);
-	/*
+/*
 	err = populate_db_from_nvs(NIMBLE_NVS_RPA_RECORDS_KEY, ble_store_config_rpa_recs, &ble_store_config_num_rpa_recs);
-	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed for 'RPA_REC'");
-		return err;
-	} else{ ESP_LOGD(TAG, "ble_store_config_rpa_recs restored %d bonds", ble_store_config_num_rpa_recs); }*/
+	if (err != ESP_OK) { return err; } 
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_RPA_RECORDS_KEY, ble_store_config_num_rpa_recs);
+*/
 	return 0;
 }
 
@@ -483,12 +465,9 @@ static int ble_nvs_restore_peer_records(void)
 	struct ble_hs_dev_records* peer_dev_rec = ble_rpa_get_peer_dev_records();
 	if (peer_dev_rec == NULL) return BLE_HS_ENOMEM;
 	esp_err_t ret = populate_db_from_nvs(NIMBLE_NVS_PEER_RECORDS_KEY, peer_dev_rec, &ble_store_num_peer_dev_rec);
-	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "NVS operation failed fetching 'Peer Dev Records'");
-		return ret;
-	}
+	if (ret != ESP_OK) { return ret; }
 	ble_rpa_set_num_peer_dev_records(ble_store_num_peer_dev_rec);
-	ESP_LOGD(TAG, "peer_dev_rec restored %d records", ble_store_num_peer_dev_rec);
+	ESP_LOGI(TAG, "%s restored: %u", NIMBLE_NVS_PEER_RECORDS_KEY, ble_store_num_peer_dev_rec);
 	return 0;
 }
 #endif
@@ -499,21 +478,19 @@ int ble_store_persist_cccds(void)
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_CCCD_SEC_KEY;
 	int nvs_count = get_nvs_db_attribute(&key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting CCCD");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_config_num_cccds) {
-		ESP_LOGD(TAG, "Persisting CCCD value in NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_config_cccds[ble_store_config_num_cccds - 1]);
 	} else if (nvs_count > ble_store_config_num_cccds) {
 		nvs_count = get_nvs_db_attribute(key_string, 0, ble_store_config_cccds, ble_store_config_num_cccds);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "NVS delete operation failed for CCCD");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting CCCD, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -526,21 +503,19 @@ int ble_store_persist_csfcs(void)
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_CSFC_SEC_KEY;
 	int nvs_count = get_nvs_db_attribute(key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting CSFC");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_config_num_csfcs) {
-		ESP_LOGD(TAG, "Persisting CSFC value in NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_config_csfcs[ble_store_config_num_csfcs - 1]);
 	} else if (nvs_count > ble_store_config_num_csfcs) {
 		nvs_count = get_nvs_db_attribute(key_string, 0, ble_store_config_csfcs, ble_store_config_num_csfcs);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "NVS delete operation failed for CSFC");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting CSFC, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -553,23 +528,21 @@ int ble_store_persist_eads(void)
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_EAD_SEC_KEY;
 	int nvs_count = get_nvs_db_attribute(&key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting EAD");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_config_num_eads) {
 		/* NVS db count less than RAM count, write operation */
-		ESP_LOGD(TAG, "Persisting EAD value in NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_config_eads[ble_store_config_num_eads - 1]);
 	} else if (nvs_count > ble_store_config_num_eads) {
 		/* NVS db count more than RAM count, delete operation */
 		nvs_count = get_nvs_db_attribute(key_string, 0, ble_store_config_eads, ble_store_config_num_eads);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "NVS delete operation failed for EAD");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting EAD, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -587,7 +560,7 @@ int ble_store_persist_local_irk(void)
 	int has = *(uint64_t*)&ble_store_local_irk[0];
 	if (nvs_count < 1 && has) {
 		/* NVS db count less than RAM count, write operation */
-		ESP_LOGD(TAG, "Persisting Local IRK value in NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_local_irk[0]);
 	} else if (nvs_count > 0 && !has) {
 		/* NVS db count more than RAM count, delete operation */
@@ -596,7 +569,7 @@ int ble_store_persist_local_irk(void)
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting Local IRK, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -607,13 +580,12 @@ int ble_store_persist_rpa_recs(void)
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_RPA_RECORDS_KEY;
 	int nvs_count = get_nvs_db_attribute(key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting RPA_RECS");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_config_num_rpa_recs) {
 		// NVS db count less than RAM count, write operation
-		ESP_LOGD(TAG, "Persisting RPA_RECS value in NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_config_rpa_recs[ble_store_config_num_rpa_recs - 1]);
 	} else if (nvs_count > ble_store_config_num_rpa_recs) {
 		//NVS db count more than RAM count, delete operation
@@ -623,7 +595,7 @@ int ble_store_persist_rpa_recs(void)
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting RPA_REC, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -633,24 +605,22 @@ int ble_store_persist_peer_secs(void) //1220785 //after 1220545
 {
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_PEER_SEC_KEY;
 	int nvs_count = get_nvs_db_attribute(key_string, 0, NULL, 0);
-	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "operation failed while persisting peer sec");
+	if (nvs_count < 0) {
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_num_peer_secs) {
 		// NVS db count less than RAM count, write operation 
-		ESP_LOGI(TAG, "Persisting peer sec value...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_peer_secs[ble_store_num_peer_secs - 1]);
 	} else if (nvs_count > ble_store_num_peer_secs) {
 		// NVS db count more than RAM count, delete operation
 		nvs_count = get_nvs_db_attribute(key_string, 0, ble_store_peer_secs, ble_store_num_peer_secs);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "delete operation failed for peer sec");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGI(TAG, "Deleting peer sec, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;
@@ -661,23 +631,21 @@ int ble_store_persist_our_secs(void)
 	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_OUR_SEC_KEY;
 	int nvs_count = get_nvs_db_attribute(key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting our sec");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
 	if (nvs_count < ble_store_config_num_our_secs) {
 		// NVS db count less than RAM count, write operation
-		ESP_LOGD(TAG, "Persisting our sec value to NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &ble_store_config_our_secs[ble_store_config_num_our_secs - 1]);
 	} else if (nvs_count > ble_store_config_num_our_secs) {
 		//NVS db count more than RAM count, delete operation
 		nvs_count = get_nvs_db_attribute(key_string, 0, ble_store_config_our_secs, ble_store_config_num_our_secs);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "NVS delete operation failed for our sec");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting our sec, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}*/
 	return 0;
@@ -686,34 +654,29 @@ int ble_store_persist_our_secs(void)
 #if MYNEWT_VAL(BLE_HOST_BASED_PRIVACY)
 int ble_store_persist_peer_records(void)
 {
-	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_PEER_RECORDS_KEY;
-	int nvs_count = get_nvs_db_attribute(&key_string, 0, NULL, 0);
-	int ble_store_num_peer_dev_rec = ble_rpa_get_num_peer_dev_records();
 	struct ble_hs_dev_records* peer_dev_rec = ble_rpa_get_peer_dev_records();
 	if (peer_dev_rec == NULL) {
 		return BLE_HS_ENOMEM;
 	}
+	char key_string[NIMBLE_NVS_STR_NAME_MAX_LEN] = NIMBLE_NVS_PEER_RECORDS_KEY;
+	int ble_store_num_peer_dev_rec = ble_rpa_get_num_peer_dev_records();
 	int nvs_count = get_nvs_db_attribute(key_string, 0, NULL, 0);
 	if (nvs_count == -1) {
-		ESP_LOGE(TAG, "NVS operation failed while persisting peer_dev_rec");
 		BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 		return BLE_HS_ESTORE_FAIL;
 	}
-
 	if (nvs_count < ble_store_num_peer_dev_rec) {
-
 		/* NVS db count less than RAM count, write operation */
-		ESP_LOGD(TAG, "Persisting peer dev record to NVS...");
+		ESP_LOGD(TAG, "Persisting %s", key_string);
 		return ble_store_nvs_write(key_string, &peer_dev_rec[ble_store_num_peer_dev_rec - 1]);
 	} else if (nvs_count > ble_store_num_peer_dev_rec) {
 		/* NVS db count more than RAM count, delete operation */
 		nvs_count = get_nvs_db_attribute(key_string, 0, peer_dev_rec, ble_store_num_peer_dev_rec);
 		if (nvs_count == -1) {
-			ESP_LOGE(TAG, "NVS delete operation failed for peer records");
 			BLE_HS_LOG(ERROR, "%s rc=%d\n", __func__, BLE_HS_ESTORE_FAIL);
 			return BLE_HS_ESTORE_FAIL;
 		}
-		ESP_LOGD(TAG, "Deleting peer record, idx = %d", nvs_count);
+		ESP_LOGD(TAG, "Deleting %s", key_string);
 		return ble_nvs_delete_value(key_string);
 	}
 	return 0;

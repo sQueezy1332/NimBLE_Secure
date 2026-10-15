@@ -15,8 +15,7 @@
 #ifdef CONFIG_LIBC_NEWLIB_NANO_FORMAT //~16,570 bytes smaller
 #pragma message "NEWLIB_NANO_FORMAT"
 #endif
-#if _ESP_LOG_ENABLED(1)
-	#define DEBUG_ENABLE
+#ifdef DEBUG_ENABLE
 #pragma message "DEBUG_ENABLE"
 #if !defined(CONFIG_ESP_CONSOLE_NONE) && (defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED) || defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG))
 #pragma message "HWCDC" 
