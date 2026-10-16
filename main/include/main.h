@@ -16,6 +16,7 @@
 #include "rom/crc.h"
 #include "host/ble_hs.h"
 #include "nimble/nimble_port.h"
+#include "ble_store_config.h"
 #include "gap.h"
 #include "gatt.h"
 #include "esp_mac.h"
@@ -136,7 +137,7 @@ static void IRAM_ATTR timer_patch_off_cb(void *);
 //__unused static void nimble_host_task(void *);
 extern void set_cts_unix(time_t now);
 #ifndef CONFIG_DOMOPHONE
-extern void adv_init(uint16_t field = HID_SVC, uint32_t duration_units = TIME_ADV_UNITS, bool legacy = false);
+extern void adv_init(uint8_t inst = 0, uint16_t field = HID_SVC, uint32_t duration_units = TIME_ADV_UNITS, bool legacy = false);
 void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) { };
 void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*) { };
 void wifi_disconnected_cb(wifi_event_sta_disconnected_t*) { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
@@ -146,7 +147,7 @@ void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
 void ble_scan_complete_cb() { ble_scan_init(); }
 void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
 #else
-extern void adv_init(uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = 0);
+extern void adv_init(uint8_t = 0, uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = true);
 void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/  } 
 void ota_update_end_cb() { adv_init(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/  }
 int get_wifi_rssi() { int r; if(!esp_wifi_sta_get_rssi(&r)) { return r; } return -1; }
@@ -207,8 +208,8 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 uint32_t HOTPget(const uint8_t* key, size_t key_len, uint64_t salt);
 uint32_t TOTPget(const uint8_t* key, size_t key_len, time_t time = time(NULL));
 
-std::unique_ptr<char[]> task_list(size_t* len = nullptr);
-void print_task_list() { __unused size_t len = 0; DEBUGF("%s", task_list(&len).get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
+std::unique_ptr<char[]> task_list(size_t* = nullptr);
+void print_task_list() { DEBUGF("%s", task_list().get()); /*DEBUGLN(esp_timer_dump(stdout));*/ };
 constexpr uint32_t strlen_const(const char* str) { return __builtin_strlen(str); }
 
 #if CONFIG_HEAP_USE_HOOKS

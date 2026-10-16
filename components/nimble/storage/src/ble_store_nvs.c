@@ -230,6 +230,8 @@ static int get_nvs_db_value(const char* key_string, void* val)
 *                       - count of NVS database, if empty = 0, value = NULL
 *                       - index that does not match with RAM db, if empty = 0 & value has database address.
 */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, size_t num_value)
 {
 	uint8_t buf[96]; uint8_t* pbuf;
@@ -292,7 +294,7 @@ static int get_nvs_db_attribute(char pkey[], bool empty, void* restrict value, s
 	}
 	return (max_limit + 1);
 }
-
+#pragma GCC diagnostic pop
 /* Deletes NVS value at given index
 * @Returns               0 on success,
 *                       -1 on NVS memory access failure

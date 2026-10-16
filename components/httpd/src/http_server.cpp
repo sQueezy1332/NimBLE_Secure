@@ -44,8 +44,8 @@ extern std::unique_ptr<char[]> task_list(size_t* len);
 extern "C" int64_t micros();
 extern "C" size_t heap_caps_sprint_heap_info(void* buf, uint32_t caps = MALLOC_CAP_INTERNAL);
 
-static esp_err_t httpd_resp_send_text(httpd_req_t *req, const char *buf, ssize_t buf_len = HTTPD_RESP_USE_STRLEN, esp_err_t ret = 0) {
-	httpd_resp_set_status(req, ret == ESP_OK ? HTTPD_200 : HTTPD_500); 
+static esp_err_t httpd_resp_send_text(httpd_req_t *req, const char *buf, ssize_t buf_len = HTTPD_RESP_USE_STRLEN, int ret = 0) {
+	httpd_resp_set_status(req, ret == 0 ? HTTPD_200 : HTTPD_500); 
     httpd_resp_set_type(req, "text/plain");
 	return httpd_resp_send(req, buf, buf_len);
 }
@@ -178,16 +178,6 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
     return httpd_resp_send_text(req, log, i);
 }
 
-esp_err_t chunked_text_handler(httpd_req_t* req)
-{
-	httpd_resp_set_status(req, HTTPD_200);
-	httpd_resp_set_type(req, "text/plain");
-	//httpd_resp_send_chunk(req, chunk1, HTTPD_RESP_USE_STRLEN);
-	httpd_resp_send_chunk(req, NULL, 0);
-
-	return ESP_OK;
-}
-
 esp_err_t http_server_init(void) {
 	httpd_uri_t handlers [] = {
 		{
@@ -210,7 +200,7 @@ esp_err_t http_server_init(void) {
 						len += sprintf(&buf[len], "Method %d\n", handler->method);
 					}
 				}
-				ESP_LOGI(TAG, "%s len = %u, strlen = %u", req->uri, len);
+				ESP_LOGI(TAG, "%s len = %u", req->uri, len);
 				ESP_LOGD(TAG, "%s", buf.get());
 				return httpd_resp_send_text(req, buf.get(), len);
 			}
@@ -301,6 +291,26 @@ esp_err_t http_server_init(void) {
 				return httpd_resp_send_text(req, req->uri);
 			},
 		},
+		{
+			.uri = "/bonds",
+			.method = HTTP_GET,
+			.handler = [](httpd_req_t *req) {
+				extern size_t ble_store_num_peer_secs;
+				extern size_t sprint_bond_data(char*, size_t);
+				if(!ble_store_num_peer_secs) 
+					return httpd_resp_send_text(req, "empty");
+				std::unique_ptr<char[]>buf(new char[256]); if(!buf) return -1;
+				httpd_resp_set_status(req, HTTPD_200);
+				httpd_resp_set_type(req, "text/plain");
+				for (size_t i = 0; i < ble_store_num_peer_secs; i++) {
+					size_t len = sprint_bond_data(buf.get(), i);
+					if(!len) break;
+					ESP_LOGD(TAG,"%s", buf.get());
+					httpd_resp_send_chunk(req, buf.get(), len);
+				}
+				return httpd_resp_send_chunk(req, NULL, 0);
+			},
+		}
 		/*{
     		.uri       = "/basic_auth";
     		.method    = HTTP_GET;

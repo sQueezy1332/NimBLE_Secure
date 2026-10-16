@@ -94,7 +94,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ret = event->adv_complete.reason;
 		if (ret == BLE_HS_ETIMEOUT || (ret != 0 && ret != BLE_HS_EPREEMPTED)) 
 		{ ble_adv_complete_cb(); } //BLE_HS_ETIMEOUT (13) //BLE_HS_EPREEMPTED (29)
-		break;
+		return 0; break;
 	case BLE_GAP_EVENT_NOTIFY_RX:
 		ESP_LOGI(TAG,"NOTIFY_RX conn_handle %u attr_handle %u %s",
 				event->notify_rx.conn_handle, event->notify_rx.attr_handle,
@@ -125,8 +125,8 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		/* Encryption has been enabled or disabled for this connection. */
 		if (likely(event->enc_change.status == 0)) {//"ble_sm.h"
 			ESP_LOGI(TAG, "connection encryption status: %d",event->enc_change.status); 
-		//7 BLE_HS_ENOTCONN 13 BLE_HS_ETIMEOUT
-		//1035 (0x40B) BLE_SM_ERR_DHKEY; 1288 (0x508) BLE_SM_ERR_PAIR_NOT_SUPP; 1281 (0x0501) Passkey Entry Failed
+		// BLE_HS_ENOTCONN(7) BLE_HS_ETIMEOUT(13)
+		//1035 BLE_SM_ERR_DHKEY(0x40B); 1288 BLE_SM_ERR_PAIR_NOT_SUPP(0x508); 1281 Passkey Entry Failed(0x0501)
 		return ble_conn_encrypted_cb(event->enc_change.conn_handle);
 		}  ESP_LOGW(TAG, "connection encryption status: %d",event->enc_change.status);
 		goto repeat; repeat: //break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
@@ -213,7 +213,7 @@ void adv_init(uint8_t instance, uint16_t field, uint32_t duration_units, bool le
 		.secondary_phy = BLE_HCI_LE_PHY_CODED,
 		.tx_power = 21,
 	};
-	int ret = ble_gap_ext_adv_configure(0, &ext_adv_cfg, &tx_pwr, gap_event_handler, NULL);
+	int ret = ble_gap_ext_adv_configure(instance, &ext_adv_cfg, &tx_pwr, gap_event_handler, NULL);
 	if(unlikely(ret == BLE_HS_ENOMEM || ret == BLE_HS_EBUSY)) { return; }
 	else { ESP_ERROR_CHECK(ret); }  //log internal
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */

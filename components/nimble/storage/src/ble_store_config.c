@@ -874,15 +874,18 @@ ble_store_config_deinit(void)
 
 void print_bond_data(const struct ble_store_value_sec* val) {
 	extern const char* format_addr(const uint8_t * addr);
-	NIMLOG("peer address: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
+	NIMLOG("peer addr: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
 	NIMLOG("\nkey_size %u", val->key_size);
 	if (val->ediv) {
 		NIMLOG("\nediv %u", val->ediv);
 	}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
 	if (val->rand_num) {
 		NIMLOG("\nrand_num 0x%08X", ((size_t*)&val->rand_num)[1]);
 		NIMLOG("%08X", ((size_t*)&val->rand_num)[0]);
 	}
+#pragma GCC diagnostic pop
 	if (val->ltk_present) {
 		NIMLOG("\nLTK:\t");
 		for (size_t i = 0; i < sizeof(val->ltk); ++i) { NIMLOG("%02X", val->ltk[i]); }
@@ -894,7 +897,7 @@ void print_bond_data(const struct ble_store_value_sec* val) {
 	if (val->sign_counter) {
 		NIMLOG("\nsign_counter %u", (size_t)val->sign_counter);
 	}
-	NIMLOG("\nauthenticated %u, sc %u\n", val->authenticated, val->sc);
+	NIMLOG("\nauth %u, sc %u\n", val->authenticated, val->sc);
 }
 
 /*

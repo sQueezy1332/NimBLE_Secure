@@ -487,7 +487,7 @@ __unused exit:
 	return ret;
 }
 
-std::unique_ptr<char[]> task_list(size_t* len) {
+std::unique_ptr<char[]> task_list(size_t* out_len) {
 	const size_t num = uxTaskGetNumberOfTasks(); //heap = getFreeHeap();
 	const size_t buf_size = ALIGN_TO_16(((num * 32) * (configGENERATE_RUN_TIME_STATS ? 2 : 1)) + 128);
 	std::unique_ptr<char[]> ptr(new char[buf_size]); 
@@ -508,7 +508,7 @@ std::unique_ptr<char[]> task_list(size_t* len) {
     size_t hours = rem / (60*60);
 	size_t mins = rem % (60*60) / 60;
 	i += sprintf(&str[i] , "Uptime: %ud %uh %um\n", days, hours, mins);
-	if(len) *len = i;
+	if(out_len) *out_len = i;
 	return ptr;
 }
 
@@ -724,28 +724,36 @@ void nvsEraseAll(const char *except) {
 	}
 	nvs_release_iterator(it);
 }
-/*
-void print_bond_data(const struct ble_store_value_sec *val) {
-	extern const char* format_addr(const uint8_t *addr);
-	NIMLOG("peer address: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
-	NIMLOG("\nkey_size %u", val->key_size);
-	if(val->ediv) {
-		NIMLOG("\nediv %u", val->ediv);
+extern "C" const char* format_addr(const uint8_t *addr);
+size_t sprint_bond_data(char* buf, size_t idx) {
+	extern ble_store_t ble_store_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
+	extern size_t ble_store_num_peer_secs;
+	if(!ble_store_num_peer_secs || idx >= ble_store_num_peer_secs) return 0;
+	ble_store_t *val = &ble_store_peer_secs[idx];
+	char* str = buf;
+	size_t i = sprintf(str,"idx [%u]\n", idx);
+	i += sprintf(&str[i], "peer addr: %s (%u)", format_addr(val->peer_addr.val), val->peer_addr.type);
+	if(val->key_size && val->key_size != 16) {
+		i += sprintf(&str[i], "\nkey_size %u", val->key_size);
 	}
+	if(val->ediv) {
+		i += sprintf(&str[i], "\nediv %u", val->ediv);
+	}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
 	if(val->rand_num) {
-		NIMLOG("\nrand_num 0x%08X", ((size_t*)&val->rand_num)[1]); 
-		NIMLOG("%08X", ((size_t*)&val->rand_num)[0]);
-	}	
+		i += sprintf(&str[i], "\nrand_num 0x%08X", (reinterpret_cast<size_t*>(&val->rand_num))[1]); 
+		i += sprintf(&str[i], "%08X", (reinterpret_cast<size_t*>(&val->rand_num))[0]); 
+	}
+#pragma GCC diagnostic pop
 	if(val->ltk_present) {
-		NIMLOG("\nLTK:\t");
-		for (size_t i = 0; i < sizeof(val->ltk); ++i) { NIMLOG("%02X", val->ltk[i]);} 
+		i += sprintf(&str[i], "\nLTK:\t"); 
+		for (size_t j = 0; j < sizeof(val->ltk); ++j) { i += sprintf(&str[i], "%02X", val->ltk[j]);} 
 	}
 	if(val->irk_present) {
-		NIMLOG("\nIRK:\t");
-		for (size_t i = 0; i < sizeof(val->irk); ++i) { NIMLOG("%02X", val->irk[i]);} 
+		i += sprintf(&str[i], "\nIRK:\t");
+		for (size_t j = 0; j < sizeof(val->irk); ++j) { i += sprintf(&str[i], "%02X", val->irk[j]);} 
 	}
-	if(val->sign_counter) {
-		NIMLOG("\nsign_counter %u", (size_t)val->sign_counter);
-	}
-	NIMLOG("\nauthenticated %u, sc %u\n", val->authenticated, val->sc);
-}*/
+	i += sprintf(&str[i], "\nauth %u, sc %u\n", val->authenticated, val->sc);
+	return i;
+}
