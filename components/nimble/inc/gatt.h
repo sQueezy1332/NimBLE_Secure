@@ -30,9 +30,6 @@ void gatt_init(void);
 
 handle_mask_t need_notify_io();
 handle_mask_t get_conn_encrypted();
-int is_encrypted(uint16_t);
-int clear_connection(uint16_t);
-int set_encryption(uint16_t);
 
 void send_io_notify();
 void send_heart_rate_notify();

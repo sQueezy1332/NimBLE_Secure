@@ -3,9 +3,10 @@
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"  //switch
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" //struct
 #define _WANT_USE_LONG_TIME_T
+#include "sdkconfig.h"
 				//#define CONFIG_ADC_LINE
 				#define CONFIG_DOMOPHONE
-#if !CONFIG_SECURE_BOOT
+#if !CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT
 				#define DEBUG_ENABLE
 #endif
 #include "ESP_MAIN.h"
@@ -33,7 +34,7 @@ static const char* TAG = "MAIN";
 	#define DEBUG_LED(...) led_set(__VA_ARGS__)
 	#define DEBUG_LED_GET() get_led_state()
 #else
-	#message "RELEASE"
+#pragma	message "RELEASE"
 	#define DEBUG_LED_GET() (0)
 	#define DEBUG_LED(...)
 	static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_BT_NIMBLE_LOG_LEVEL_NONE); 
@@ -55,8 +56,8 @@ static const char* TAG = "MAIN";
 #define PIN_LED 8
 #define BLE_GAP_APPEARANCE  GENERIC_HID_TAG
 #ifdef CONFIG_ADC_LINE
-	#define  1
-	#define PIN_LEDPIN_LINE_MASK BIT(PIN_LED)
+	#define PIN_LINE 1
+	#define PIN_LED_MASK BIT(PIN_LED)
 	//#define PIN_RELAY_2 2
 	#define DRIVE_CAP_IMPL (GPIO_DRIVE_CAP_3)
 	#define GPIO_MODE_RELAY_IMPL (GPIO_MODE_INPUT_OUTPUT)
@@ -100,7 +101,7 @@ static void (*patch_impl)(uint8_t) = lock_open_only;
 	#define RELAY_2_PATCH_IMPL()
 	#define RELAY_2_UNPATCH_IMPL()
 #endif
-#define MIN_RSSI_PATCH_DEFAULT (-90)
+#define MIN_RSSI_PATCH_DEFAULT (-92)
 #define CDC_BUF_SIZE (128)
 
 using String = std::string;
@@ -148,8 +149,8 @@ void ble_scan_complete_cb() { ble_scan_init(); }
 void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
 #else
 extern void adv_init(uint8_t = 0, uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = true);
-void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/  } 
-void ota_update_end_cb() { adv_init(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/  }
+void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/ } 
+void ota_update_end_cb() { nimble_event_put(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/ }
 int get_wifi_rssi() { int r; if(!esp_wifi_sta_get_rssi(&r)) { return r; } return -1; }
 void ble_scan_complete_cb() { }
 void ble_adv_complete_cb() { nimble_event_put(); }
@@ -168,7 +169,7 @@ void ble_device_name_set();
 void wifi_hostname_set();
 int ble_delete_all_bonds();
 void ble_connect_cb(int status) { nimble_event_put(); }
-int ble_disconnect_cb(uint16_t handle) { nimble_event_put(); return clear_connection(handle); }
+void ble_disconnect_cb(uint16_t handle) { nimble_event_put(); }
 
 
 size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);

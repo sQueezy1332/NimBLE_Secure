@@ -40,7 +40,7 @@ __unused static uint16_t h_heart_chr;
 static handle_mask_t subs_io, __unused subs_spp, __unused subs_heart;
 static handle_mask_t conn_mask;
 
-const uint16_t MAX_HANDLE = sizeof(handle_mask_t) * 8; //2 + MYNEWT_VAL_BLE_MAX_CONNECTIONS;
+const uint8_t MAX_HANDLE = sizeof(handle_mask_t) * 8; //2 + MYNEWT_VAL_BLE_MAX_CONNECTIONS;
 static_assert(1 + MYNEWT_VAL_BLE_MAX_CONNECTIONS < sizeof(handle_mask_t) * 8);
 
 /* TAG services table */
@@ -168,9 +168,8 @@ static int serial_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct 
 }*/
 #endif
 /* Public functions */
-
-int clear_connection(uint16_t h_conn) {
-	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
+void clear_connection(uint16_t h_conn) {
+	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_VOID(BLE_ATT_ERR_INVALID_HANDLE); }
 #ifdef AUTO_IO_CHR
 	handle_write(subs_io, h_conn, 0);
 #endif
@@ -181,12 +180,11 @@ int clear_connection(uint16_t h_conn) {
 	handle_write(subs_heart, h_conn, 0);
 #endif
 	handle_write(conn_mask, h_conn, 0);
-	return 0;
 }
 
-int set_encryption(uint16_t h_conn) {
-	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_RET(BLE_ATT_ERR_INVALID_HANDLE); }
-	handle_write(conn_mask, h_conn, 1); return 0;
+void set_encryption(uint16_t h_conn) {
+	if (h_conn > MAX_HANDLE || !h_conn) { CHECK_VOID(BLE_ATT_ERR_INVALID_HANDLE); }
+	handle_write(conn_mask, h_conn, 1);
 }
 
 int is_encrypted(uint16_t h_conn) {

@@ -27,8 +27,8 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc*);
 void ble_adv_complete_cb();
 void ble_scan_complete_cb();
 void ble_connect_cb(int);
-int ble_disconnect_cb(uint16_t);
-int ble_conn_encrypted_cb(uint16_t); 
+void ble_disconnect_cb(uint16_t);
+void ble_conn_encrypted_cb(uint16_t); 
 int parse_rx_data_cb(const struct ble_gap_event*);
 
 #ifdef __cplusplus

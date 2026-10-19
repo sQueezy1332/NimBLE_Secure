@@ -8,7 +8,8 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 static const char* TAG = "GAP";
 //#define RANDOM_ADDR
-
+extern void set_encryption(uint16_t);
+extern void clear_connection(uint16_t);
 const char* format_addr(const uint8_t addr[]) {
 	static char buf[18];
 	sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x", addr[5], addr[4],addr[3], addr[2], addr[1], addr[0]);
@@ -72,7 +73,9 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	case BLE_GAP_EVENT_DISCONNECT: /* A connection was terminated, print connection descriptor */
 		ESP_LOGW(TAG, "DISCONNECT from peer; reason 0x%04x",event->disconnect.reason);
 		if(event->disconnect.reason == 0x0216) break; //Terminated By Local Host //0x0213 by remote device
-		return ble_disconnect_cb(event->disconnect.conn.conn_handle); //(0x023D) (BLE_ERR_CONN_TERM_MIC)
+		clear_connection(event->disconnect.conn.conn_handle);
+		ble_disconnect_cb(event->disconnect.conn.conn_handle); //(0x023D) (BLE_ERR_CONN_TERM_MIC)
+		break;
 	case BLE_GAP_EVENT_CONN_UPDATE:
 #ifdef DEBUG_LOG
 		ESP_LOGI(TAG, "CONN_UPDATE status %d",event->conn_update.status);
@@ -121,16 +124,17 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ESP_LOGI(TAG, "MTU update; conn_handle %u ch id %u mtu %u",
 			event->mtu.conn_handle, event->mtu.channel_id,event->mtu.value);
 		break;
-	case BLE_GAP_EVENT_ENC_CHANGE:/* Encryption change event */
+	case BLE_GAP_EVENT_ENC_CHANGE:{/* Encryption change event */
 		/* Encryption has been enabled or disabled for this connection. */
 		if (likely(event->enc_change.status == 0)) {//"ble_sm.h"
-			ESP_LOGI(TAG, "connection encryption status: %d",event->enc_change.status); 
-		// BLE_HS_ENOTCONN(7) BLE_HS_ETIMEOUT(13)
+			ESP_LOGI(TAG, "connection encryption status: %d",event->enc_change.status); //BLE_HS_ENOTCONN(7) BLE_HS_ETIMEOUT(13)
 		//1035 BLE_SM_ERR_DHKEY(0x40B); 1288 BLE_SM_ERR_PAIR_NOT_SUPP(0x508); 1281 Passkey Entry Failed(0x0501)
-		return ble_conn_encrypted_cb(event->enc_change.conn_handle);
+			set_encryption(event->enc_change.conn_handle);
+			ble_conn_encrypted_cb(event->enc_change.conn_handle);
+			break;
 		}  ESP_LOGW(TAG, "connection encryption status: %d",event->enc_change.status);
-		goto repeat; repeat: //break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-	case BLE_GAP_EVENT_REPEAT_PAIRING:
+		goto repeat; repeat: }//break; //#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+	//case BLE_GAP_EVENT_REPEAT_PAIRING:
 	static_assert(MYNEWT_VAL_BLE_HANDLE_REPEAT_PAIRING_DELETION);
 		//if((ret = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc))) { return ret; }
 		//ble_store_util_delete_peer(&desc.peer_id_addr);

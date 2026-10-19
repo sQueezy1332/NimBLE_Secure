@@ -453,20 +453,20 @@ void check_distance_by_rssi() {
 				} else { ESP_LOGD(TAG, "RSSI %i, handle %u", rssi, h); }
 			}
 		}
-	} else { 
+	} else {
 		ESP_LOGD(TAG, "tracked_conn 0x%X & conn_enc 0x%X" , tracked_conn_mask, get_conn_encrypted());  
-		tracked_conn_mask = 0; 
+		tracked_conn_mask = 0;
 	}
 	if(!tracked_conn_mask) { esp_timer_stop(h_timer_rssi);} 
 	else { /*ESP_LOGI(TAG, "tracked_conn_mask %u", tracked_conn_mask);*/ }
 }
 #endif
 
-int ble_conn_encrypted_cb(uint16_t handle) { 
-	int ret = set_encryption(handle); 
+void ble_conn_encrypted_cb(uint16_t handle) {
+	nimble_event_put();
 #ifdef CONFIG_DOMOPHONE
 	int8_t rssi;
-	CHECK_GOTO(ble_gap_conn_rssi(handle, &rssi), exit); 
+	CHECK_VOID(ble_gap_conn_rssi(handle, &rssi)); 
 	if (rssi >= noinit.rssi) {
 		ESP_LOGI(TAG, "RSSI %i, handle %u", rssi, handle);
 		patch_timer();
@@ -482,9 +482,6 @@ int ble_conn_encrypted_cb(uint16_t handle) {
 #else
 	patch_timer();
 #endif
-__unused exit:
-	adv_init(); 
-	return ret;
 }
 
 std::unique_ptr<char[]> task_list(size_t* out_len) {
@@ -500,7 +497,7 @@ std::unique_ptr<char[]> task_list(size_t* out_len) {
 	i += strlen(&str[i]); 
 	strcpy(&str[i],"\n"); i += 1;
 #endif
-	i += sprintf(&str[i] , "Heap: ");
+	i += sprintf(&str[i] , "Heap:");
 	i += heap_caps_sprint_heap_info(&str[i]);
 	uint64_t seconds = micros() / 1000000;
     size_t days = seconds / (60*60*24);
