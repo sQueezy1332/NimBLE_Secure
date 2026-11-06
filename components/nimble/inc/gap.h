@@ -14,9 +14,8 @@ union ble_store_key; union ble_store_value;
 void nimble_host_config_init();
 void nimble_event_register(void (*fun)(void*), void* arg);
 void nimble_event_put();
-void ble_scan_init();
-void set_scan_periods(uint16_t interval, uint16_t window);
-void adv_init(uint8_t inst, uint16_t field, uint32_t duration_units, bool legacy);
+void ble_scan_init(uint16_t, uint16_t, uint8_t);
+void adv_init(uint8_t inst, uint16_t field, uint32_t duration_ms, bool legacy);
 int save_bonding(uint16_t h_conn);
 int is_connection_encrypted(uint16_t h_conn);
 
@@ -30,7 +29,7 @@ void ble_connect_cb(int);
 void ble_disconnect_cb(uint16_t);
 void ble_conn_encrypted_cb(uint16_t); 
 int parse_rx_data_cb(const struct ble_gap_event*);
-
+const char* format_addr(const uint8_t[]);
 #ifdef __cplusplus
 }
 #endif

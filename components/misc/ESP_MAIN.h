@@ -17,11 +17,12 @@
 #endif
 #ifdef DEBUG_ENABLE
 #pragma message "DEBUG_ENABLE"
-#if !defined(CONFIG_ESP_CONSOLE_NONE) && (defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED) || defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG))
-#pragma message "HWCDC" 
-#else 
+#if !defined(CONFIG_ESP_CONSOLE_NONE) && defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED)
+#pragma message "HWCDC"  
+#endif 
+#if defined(CONFIG_ESP_CONSOLE_UART_DEFAULT)
 #pragma message "UART0"
-#endif  // !ARDUINO_USB_CDC_ON_BOOT -- Serial is used from UART0
+#endif
 //#define DEBUG(x, ...) printf(x, ##__VA_ARGS__)
 #define DEBUGLN() printf("\n")
 //#define DEBUGLN(x, ...) printf("%s\n", x, ##__VA_ARGS__)
@@ -186,7 +187,7 @@ inline void nvs_log(const char* except = NULL) {
 					DEBUGLN(); break;
 				default: break;
 				}
-			} else { CHECK_(ret); }
+			} else if( ret == ESP_ERR_NVS_NOT_FOUND) { CHECK_(ret); }
 			DEBUGLN();
 		} else { CHECK_(ret); }
 	}

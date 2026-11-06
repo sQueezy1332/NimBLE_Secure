@@ -31,7 +31,7 @@ esp_err_t wifi_init_ap(const char* ssid = CONFIG_IDF_TARGET, const char* pass = 
 #else
 void wifi_setup_default(wifi_storage_t);
 esp_err_t wifi_init_sta(const char*, const char*, uint8_t, wifi_bandwidth_t);
-esp_err_t wifi_init_ap(const char* ssid, const char*, uint8_t, uint8_t, bool, int8_t, wifi_bandwidth_t);
+esp_err_t wifi_init_ap(const char*, const char*, uint8_t, uint8_t, bool, int8_t, wifi_bandwidth_t);
 #endif
 
 void ap_set_dns_addr(esp_netif_t *ap,esp_netif_t *sta);
@@ -43,6 +43,11 @@ const char* print_ip(uint32_t addr);
 uint32_t wifi_is_connected();
 
 int wifi_ap_get_sta_num();
+
+void wifi_sta_connected_cb(wifi_event_sta_connected_t*);
+void wifi_sta_disconnected_cb(wifi_event_sta_disconnected_t*);
+void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*);
+void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*);
 
 #ifdef __cplusplus
 }

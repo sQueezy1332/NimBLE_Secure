@@ -8,24 +8,26 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 static const char* TAG = "GAP";
 //#define RANDOM_ADDR
+/*
+__weak_symbol void host_sync_cb() {}
+__weak_symbol uint32_t generate_pin() { return 111111; }
+__weak_symbol uint32_t generate_uuid32() { return 0; }
+__weak_symbol void parse_adv_cb(const struct ble_gap_ext_disc_desc*) {}
+__weak_symbol void ble_adv_complete_cb() {}
+__weak_symbol void ble_scan_complete_cb() {}
+__weak_symbol void ble_connect_cb(int) { }
+__weak_symbol void ble_disconnect_cb(uint16_t) { }
+__weak_symbol int disconnect_cb(uint16_t) { return 0; }
+__weak_symbol void ble_conn_encrypted_cb(uint16_t) { }
+__weak_symbol int parse_rx_data_cb(const struct ble_gap_event*) { return 0; }
+*/
 extern void set_encryption(uint16_t);
 extern void clear_connection(uint16_t);
 const char* format_addr(const uint8_t addr[]) {
-	static char buf[18];
-	sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x", addr[5], addr[4],addr[3], addr[2], addr[1], addr[0]);
-	return buf;
+	extern char g_BUFF[];
+	sprintf(g_BUFF, "%02x:%02x:%02x:%02x:%02x:%02x", addr[5], addr[4],addr[3], addr[2], addr[1], addr[0]);
+	return g_BUFF;
 }
-
-//__weak_symbol void host_sync_cb() {}
-//__weak_symbol uint32_t generate_pin() { return 111111; }
-//__weak_symbol uint32_t generate_uuid32() { return 0; }
-//__weak_symbol void parse_adv_cb(const struct ble_gap_ext_disc_desc*) {}
-//__weak_symbol void ble_adv_complete_cb() {}
-//__weak_symbol void ble_scan_complete_cb() {}
-//__weak_symbol void ble_connect_cb(int) { }
-//__weak_symbol int disconnect_cb(uint16_t) { return 0; }
-//__weak_symbol int conn_encrypted_cb(uint16_t) { return 0; }
-//__weak_symbol int parse_rx_data(const struct ble_gap_event*) { return 0; }
 
 void set_random_addr(void);
 /* Private function declarations */
@@ -39,12 +41,8 @@ static void print_event_report(const struct ble_gap_disc_desc*);
 //static void print_event_report(const decltype(ble_gap_event::periodic_sync) & rep);
 //static void print_event_report(const decltype(ble_gap_event::periodic_sync_lost) & rep);
 
-__unused bool synced;
 __unused static uint8_t own_addr_val[6] = {};
 uint8_t own_addr_type = BLE_HCI_ADV_OWN_ADDR_PUBLIC;
-
-static uint16_t scan_interval = 0;
-static uint16_t scan_window = 0;
  //sizeof(ble_gap_conn_desc); //44
 
 /*
@@ -93,10 +91,10 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 		ble_scan_complete_cb();
 		break;
 	case BLE_GAP_EVENT_ADV_COMPLETE:
-		ESP_LOGI(TAG, "ADV_COMPLETE reason %d",event->adv_complete.reason); //start_advertising();
+		ESP_LOGI(TAG, "ADV_COMPLETE reason %d",event->adv_complete.reason);
 		ret = event->adv_complete.reason;
-		if (ret == BLE_HS_ETIMEOUT || (ret != 0 && ret != BLE_HS_EPREEMPTED)) 
-		{ ble_adv_complete_cb(); } //BLE_HS_ETIMEOUT (13) //BLE_HS_EPREEMPTED (29)
+		if (ret == BLE_HS_ETIMEOUT || (ret != BLE_HS_EPREEMPTED && ret != 0 ))
+		{ ble_adv_complete_cb(); } //BLE_HS_ETIMEOUT (13) BLE_HS_EPREEMPTED (29) CONNECTION (0)
 		return 0; break;
 	case BLE_GAP_EVENT_NOTIFY_RX:
 		ESP_LOGI(TAG,"NOTIFY_RX conn_handle %u attr_handle %u %s",
@@ -177,7 +175,7 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 	return ESP_OK;
 }
 
-void adv_init(uint8_t instance, uint16_t field, uint32_t duration_units, bool legacy) {
+void adv_init(uint8_t instance, uint16_t field, uint32_t duration_ms, bool legacy) {
 	if(ble_gap_ext_adv_active(instance)) return;
 	//const ble_uuid32_t uuid32 = BLE_UUID32_INIT(generate_uuid32());
 	__unused const ble_uuid16_t uuid16 = BLE_UUID16_INIT(field);
@@ -218,13 +216,19 @@ void adv_init(uint8_t instance, uint16_t field, uint32_t duration_units, bool le
 		.tx_power = 21,
 	};
 	int ret = ble_gap_ext_adv_configure(instance, &ext_adv_cfg, &tx_pwr, gap_event_handler, NULL);
-	if(unlikely(ret == BLE_HS_ENOMEM || ret == BLE_HS_EBUSY)) { return; }
+	if(unlikely(ret == BLE_HS_ENOMEM)) {
+		ESP_LOGE(TAG, "ENOMEM"); return;
+	} 
+	if(unlikely(ret == BLE_HS_EBUSY)) {
+		ESP_LOGE(TAG, "EBUSY");	return; 
+	}
 	else { ESP_ERROR_CHECK(ret); }  //log internal
 	/* Default to legacy PDUs size, mbuf chain will be increased if needed */
 	struct os_mbuf *data = os_msys_get_pkthdr(BLE_HCI_MAX_ADV_DATA_LEN, 0);// assert(data);
 	ESP_ERROR_CHECK(ble_hs_adv_set_fields_mbuf(&adv_fields, data));
 	ESP_ERROR_CHECK(ble_gap_ext_adv_set_data(instance, data));
-	ret = ble_gap_ext_adv_start(instance, duration_units, 0);
+	int dur_units = duration_ms / 10; if(dur_units >= 0xFFFF) dur_units = 0xFFFF;
+	ret = ble_gap_ext_adv_start(instance, dur_units, 0);
 	if(ret == BLE_HS_HCI_ERR(BLE_ERR_MEM_CAPACITY)) {
 		ESP_LOGE(TAG, "BLE_ERR_MEM_CAPACITY"); return;
 	} else { ESP_ERROR_CHECK(ret);} 
@@ -239,7 +243,7 @@ void adv_init(uint8_t instance, uint16_t field, uint32_t duration_units, bool le
 	};
 	ESP_ERROR_CHECK(ble_gap_adv_set_fields(&adv_fields));
 	//ESP_ERROR_CHECK(ble_gap_adv_rsp_set_fields(&rsp_fields));
-	ESP_ERROR_CHECK(ble_gap_adv_start(own_addr_type, NULL, TIMER_ADV, &adv_cfg, gap_event_handler,NULL));
+	ESP_ERROR_CHECK(ble_gap_adv_start(own_addr_type, NULL, duration_ms, &adv_cfg, gap_event_handler, NULL));
 	ESP_LOGI(TAG, "advertising started!");
 #endif
 }
@@ -255,20 +259,18 @@ void nimble_event_register(void (*fun)(void*), void* arg ) {
 	ble_npl_event_init(&adv_restart_event, (ble_npl_event_fn*)fun, arg);
 }
 
-void set_scan_periods(uint16_t interval, uint16_t window) { scan_interval = interval, scan_window = window; }
-
-void ble_scan_init() {
+void ble_scan_init(uint16_t itvl, uint16_t window, uint8_t passive) {
 	if(ble_gap_disc_active()) return;
 	//__unused struct ble_gap_disc_params disc_params = { .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0, .passive = 1, .filter_duplicates = 1, .disable_observer_mode = 0};
 	__unused struct ble_gap_ext_disc_params ext_params = { 
-		.itvl = scan_interval,
-		.window = scan_window,
-		.passive = SCAN_PASSIVE,
-		.disable_observer_mode = 0 
+		.itvl = itvl,
+		.window = window,
+		.passive = passive,
+		.disable_observer_mode = 0
 	};
 	//ESP_RETURN_VOID_ON_ERROR(ble_hs_id_infer_auto(0, &own_addr_type), TAG, "determining address type");
 	//ESP_RETURN_VOID_ON_ERROR(ble_gap_disc(BLE_ADDR_PUBLIC,0,&disc_params, gap_event_handler, NULL), TAG, "ble_gap_disc");
-	ESP_ERROR_CHECK(ble_gap_ext_disc(own_addr_type, 0, 0, 1, 0, 0,&ext_params,&ext_params, gap_event_handler, NULL));
+	ESP_ERROR_CHECK(ble_gap_ext_disc(own_addr_type, 0, 0, 1, 0, 0, &ext_params, &ext_params, gap_event_handler, NULL));
 }
 
 static void ble_stack_reset(int reason) { ESP_LOGW("NimBLE", "nimble stack reset, reason: %d", reason);}; 

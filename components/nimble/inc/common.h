@@ -10,10 +10,8 @@
 #if !CONFIG_BT_NIMBLE_LOG_LEVEL_NONE
 #define DEBUG_LOG
 #define NIMLOG(msg, ...) printf(msg, ##__VA_ARGS__)
-#define SCAN_PASSIVE 0 
 #else
 #define NIMLOG(msg, ...) 
-#define SCAN_PASSIVE 1
 #endif
 
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)

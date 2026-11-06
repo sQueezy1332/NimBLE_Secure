@@ -782,7 +782,7 @@ int ble_store_config_read_hook(int obj_type, const union ble_store_key* key, uni
 	case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
 		rc = ble_store_config_read_local_irk(&key->local_irk, &val->local_irk); break;
 	default: rc = BLE_HS_ENOENT;
-	} ESP_LOGI(TAG, "%s obj_type %u %s [%u]", "read",
+	} ESP_LOGI(TAG, "%s obj_type %u %s idx %u", "read",
 		obj_type, rc == 0 ? "+" : "-", key->sec.idx);
 	return rc;
 }
@@ -836,7 +836,7 @@ int ble_store_config_delete_hook(int obj_type, const union ble_store_key* key) {
 	case BLE_STORE_OBJ_TYPE_LOCAL_IRK:
 		rc = ble_store_config_delete_local_irk(&key->local_irk); break;
 	default: rc = BLE_HS_ENOTSUP;
-	} ESP_LOGI(TAG, "%s obj_type %u %s [%u]", "delete",
+	} ESP_LOGI(TAG, "%s obj_type %u %s idx %u", "delete",
 		obj_type, rc == BLE_HS_ENOTSUP ? "\tBLE_HS_ENOTSUP" : rc == 0 ? "+" : "-", key->sec.idx);
 	return rc;
 }

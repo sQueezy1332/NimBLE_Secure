@@ -1,5 +1,10 @@
 #include "wifi_api.h"
+#include "esp_check.h"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#define FUNC_ADDRESS esp_cpu_get_call_addr((intptr_t)__builtin_return_address(0))
+#define CHECK_(x) ESP_ERROR_CHECK_WITHOUT_ABORT(x)
+#define CHECK_RET(x) ESP_RETURN_ON_ERROR(x,"","err 0x%02x at 0x%08x", err_rc_, FUNC_ADDRESS)
+#define CHECK_VOID(x) ESP_RETURN_VOID_ON_ERROR(x,"","err 0x%02x at 0x%08x", err_rc_, FUNC_ADDRESS)
 
 #define MACSTR_SIZE ALIGN_TO_16(sizeof(MACSTR))
 #define IPSTR_SIZE ALIGN_TO_16(sizeof(IPSTR))
@@ -13,29 +18,27 @@ esp_event_handler_instance_t h_event_wifi, h_event_ip;
 esp_netif_t* h_netif_sta;
 esp_netif_t* h_netif_ap;
 
-
-__weak_symbol void wifi_connected_cb(wifi_event_sta_connected_t*) {}
+__weak_symbol void wifi_sta_connected_cb(wifi_event_sta_connected_t*) {}
 __weak_symbol void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) {}
-__weak_symbol void wifi_disconnected_cb(wifi_event_sta_disconnected_t*) {}
+__weak_symbol void wifi_sta_disconnected_cb(wifi_event_sta_disconnected_t*) {}
 __weak_symbol void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*) {}
-__unused static char BUFF[MACSTR_SIZE];
+
+__unused char g_BUFF[MACSTR_SIZE];
 
 const char* print_mac(const uint8_t mac[6]) {
-	sprintf(BUFF, MACSTR, MAC2STR(mac));
-	return BUFF;
+	sprintf(g_BUFF, MACSTR, MAC2STR(mac));
+	return g_BUFF;
 }
 			 
 const char* print_ip(uint32_t addr) {
 	const uint8_t* const ip = (uint8_t*)&addr;
-	sprintf(BUFF, IPSTR, ip[0], ip[1], ip[2], ip[3]);
-	return BUFF;
+	sprintf(g_BUFF, IPSTR, ip[0], ip[1], ip[2], ip[3]);
+	return g_BUFF;
 }
 
 int wifi_ap_get_sta_num() {
 	wifi_sta_list_t list; 
-	esp_err_t ret = esp_wifi_ap_get_sta_list(&list);
-	ESP_ERROR_CHECK_WITHOUT_ABORT(ret);
-	if(ret) return 0;
+	CHECK_RET(esp_wifi_ap_get_sta_list(&list));
 	ESP_LOGI(TAG, "sta_list.num %d", list.num);
 	return list.num;
 }
@@ -50,11 +53,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 	switch (event_id) {
 					/* Station*/
 	case WIFI_EVENT_STA_START: ESP_LOGD(TAG_STA, "START"); 
-		ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());break;
+		CHECK_(esp_wifi_connect());break;
 	case WIFI_EVENT_STA_STOP: ESP_LOGD(TAG_STA, "STOP"); break;
 	case WIFI_EVENT_STA_CONNECTED: {
 		__unused wifi_event_sta_connected_t* e = (wifi_event_sta_connected_t*) event_data;
-		wifi_connected_cb(e);
+		wifi_sta_connected_cb(e);
 		//e->ssid[e->ssid_len & 31] = '\0'; ESP_LOGI(TAG_STA, "CONNECTED to:%s", (char*)e->ssid);
 		ESP_LOGI(TAG_STA, "bssid %s, channel %u, AID %u", print_mac(e->bssid), e->channel, e->aid);
 		xEventGroupSetBits(h_group_wifi, WIFI_STA_CONNECTED);
@@ -75,8 +78,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 			default: ESP_LOGW(TAG_STA, "DISCONNECTED" " reason %u", e->reason); break;
 		}
 		xEventGroupClearBits(h_group_wifi, WIFI_STA_CONNECTED);
-		wifi_disconnected_cb(e);
-		ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
+		wifi_sta_disconnected_cb(e);
+		CHECK_(esp_wifi_connect());
 	}
 	break; 
 	case WIFI_EVENT_STA_AUTHMODE_CHANGE: ESP_LOGI(TAG_STA, "AUTHMODE_CHANGE"); break;
@@ -95,9 +98,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 	case WIFI_EVENT_AP_STADISCONNECTED: {
 			wifi_event_ap_stadisconnected_t * e = (wifi_event_ap_stadisconnected_t *)event_data;
 			ESP_LOGI(TAG_AP, "Station %s left, AID %d, reason %d", print_mac(e->mac), e->aid, e->reason);
+			if(wifi_ap_get_sta_num() <= 0) {
+				xEventGroupClearBits(h_group_wifi, WIFI_AP_CONNECTED | WIFI_AP_IPASSIGNED);
+			}
 			wifi_ap_disconnected_cb(e);
-			if(wifi_ap_get_sta_num() > 0) break;
-			xEventGroupClearBits(h_group_wifi, WIFI_AP_CONNECTED | WIFI_AP_IPASSIGNED);
 		} break;
 	case WIFI_EVENT_AP_WRONG_PASSWORD: ESP_LOGI(TAG_AP, "WRONG_PASSWORD"); break;
 
@@ -157,7 +161,7 @@ esp_err_t wifi_init_sta(const char* ssid, const char* pass, uint8_t channel, wif
 	} else return ESP_ERR_WIFI_PASSWORD;
 	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
 	wifi_bandwidths_t band = {.ghz_2g = bw }; 
-	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_bandwidths(WIFI_IF_STA, &band));
+	CHECK_(esp_wifi_set_bandwidths(WIFI_IF_STA, &band));
 	ESP_LOGI(TAG_STA, "%s finished.", __FUNCTION__);
 	ESP_LOGD(TAG_STA, "SSID '%s' pass '%s'", wifi_config.sta.ssid, wifi_config.sta.password);
 	return ESP_OK;
@@ -185,7 +189,7 @@ esp_err_t wifi_init_ap(const char* ssid, const char* pass, uint8_t channel, uint
 	} else return ESP_ERR_WIFI_PASSWORD;
 	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config));
 	esp_wifi_set_max_tx_power(power); wifi_bandwidths_t band = {.ghz_2g = bw};
-	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_bandwidths(WIFI_IF_AP, &band));
+	CHECK_(esp_wifi_set_bandwidths(WIFI_IF_AP, &band));
 	ESP_LOGI(TAG_AP, "%s finished.", __FUNCTION__);
 	ESP_LOGD(TAG_AP, "SSID '%s' pass '%s'", wifi_ap_config.ap.ssid, wifi_ap_config.ap.password);
 	ESP_LOGI(TAG_AP, "channel %u max_conn %u", wifi_ap_config.ap.channel, wifi_ap_config.ap.max_connection);
@@ -197,11 +201,11 @@ void ap_set_dns_addr(esp_netif_t *ap, esp_netif_t *sta) {
 	esp_netif_dns_info_t dns; uint8_t dhcps_offer_option = DHCPS_OFFER_DNS;
 	esp_netif_get_dns_info(sta,ESP_NETIF_DNS_MAIN,&dns);
 	ESP_LOGI(TAG, "dns %s", print_ip(dns.ip.u_addr.ip4.addr));
-	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(ap));
+	CHECK_(esp_netif_dhcps_stop(ap));
 	ESP_ERROR_CHECK(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &dhcps_offer_option, sizeof(dhcps_offer_option)));
 	ESP_ERROR_CHECK(esp_netif_set_dns_info(ap, ESP_NETIF_DNS_MAIN, &dns));
-	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(ap));
-	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_set_default_netif(sta));
+	CHECK_(esp_netif_dhcps_start(ap));
+	CHECK_(esp_netif_set_default_netif(sta));
 	int ret = esp_netif_napt_enable(ap);
 	if(ret) { ESP_LOGE(TAG, "0x%02X",ret); } else { ESP_LOGI(TAG, "enabled");}
 }

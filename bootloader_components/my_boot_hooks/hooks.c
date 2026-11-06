@@ -13,7 +13,7 @@ void bootloader_before_init(void) {
     if(reason == RESET_REASON_CHIP_POWER_ON ||
 		reason == RESET_REASON_SYS_BROWN_OUT ||
 		reason == RESET_REASON_SYS_CLK_GLITCH) {
-        esp_rom_delay_us(500000); //esp_rom_get_reset_reason(PRO_CPU_NUM)
+        esp_rom_delay_us(1000000); //esp_rom_get_reset_reason(PRO_CPU_NUM)
     }
     //ESP_EARLY_LOGW("HOOK", "Reset reason 0x%X", reason);
     /* Keep in my mind that a lot of functions cannot be called from here

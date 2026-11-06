@@ -244,7 +244,6 @@ void gatt_init(void) {
 	CHECK_VOID(ble_gatts_add_svcs(gatt_svr_svcs));
 	gatt_cts_service_init();
 	gatt_hid_service_init();
-	
 }
 
 void gatt_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg) {

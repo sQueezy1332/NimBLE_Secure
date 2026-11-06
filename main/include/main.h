@@ -5,7 +5,7 @@
 #define _WANT_USE_LONG_TIME_T
 #include "sdkconfig.h"
 				//#define CONFIG_ADC_LINE
-				#define CONFIG_DOMOPHONE
+				//#define CONFIG_DOMOPHONE 1
 #if !CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT
 				#define DEBUG_ENABLE
 #endif
@@ -28,15 +28,33 @@
 #include "credentials.h"
 #include "tlsf_block_functions.h"
 
+#ifdef CONFIG_DOMOPHONE
+#define TIME_CHANGE_PIN (1000ul * 60 * 60 * 6) //hours
+#define TOTP_TIMESTEP 	(30ul)
+#define TIMER_PATCH     (SEC * 5)
+#define TIMER_PATCH_BUTTON (SEC * 3)
+#define TIMER_PATCH_OFF (0) //min
+#define TIME_ADV_MS	(0) //max 0xffff
+#else
+#define TIME_CHANGE_PIN (1000ul * 60 * 60 * 6) //hours
+#define TOTP_TIMESTEP 	(60*60*1ul)
+#define TIMER_PATCH     (MINS * 60 * 6)
+#define TIMER_PATCH_OFF (MINS * 5)
+#define TIME_ADV_MS	((1000 * 60 * 10)) //max 0xffff
+#endif
+static_assert((TIME_ADV_MS / 10) <= 0xFFFF);
+
 static const char* TAG = "MAIN";
 #ifdef DEBUG_ENABLE
 	#include "led.h"
 	#define DEBUG_LED(...) led_set(__VA_ARGS__)
 	#define DEBUG_LED_GET() get_led_state()
+	#define SCAN_PASSIVE 0
 #else
 #pragma	message "RELEASE"
 	#define DEBUG_LED_GET() (0)
 	#define DEBUG_LED(...)
+	#define SCAN_PASSIVE 1
 	static_assert(!_ESP_LOG_ENABLED(1)); static_assert(CONFIG_BT_NIMBLE_LOG_LEVEL_NONE); 
 	static_assert(CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT); static_assert(CONFIG_COMPILER_OPTIMIZATION_PERF);
 	//static_assert(!configGENERATE_RUN_TIME_STATS); 
@@ -127,7 +145,7 @@ uint8_t scan_key_len = DEF_BLE_SCAN_DATA_LEN;	static_assert(DEF_BLE_SCAN_DATA_LE
 
 static settings sets;
 __unused __NOINIT_ATTR static sets_noinit noinit;
-
+static uint16_t scan_interval = 0, scan_window = 0;
 static void bluetooth_init();
 static void wifi_init();
 __unused static void mainTask(void * = NULL);
@@ -138,17 +156,20 @@ static void IRAM_ATTR timer_patch_off_cb(void *);
 //__unused static void nimble_host_task(void *);
 extern void set_cts_unix(time_t now);
 #ifndef CONFIG_DOMOPHONE
-extern void adv_init(uint8_t inst = 0, uint16_t field = HID_SVC, uint32_t duration_units = TIME_ADV_UNITS, bool legacy = false);
-void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) { };
-void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*) { };
-void wifi_disconnected_cb(wifi_event_sta_disconnected_t*) { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
-void wifi_connected_cb(wifi_event_sta_connected_t*) { CHECK_(esp_timer_stop(h_timer_wifi)); }
-void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
+extern void adv_init(uint8_t inst = 0, uint16_t field = HID_SVC, uint32_t duration_ms = TIME_ADV_MS, bool legacy = false);
 
-void ble_scan_complete_cb() { ble_scan_init(); }
-void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } ble_scan_init(); }
+void host_sync_cb() { ble_scan_init(scan_interval, scan_window, SCAN_PASSIVE); }
+void wifi_ap_connected_cb(wifi_event_ap_staconnected_t*) { CHECK_(esp_timer_start(h_timer_wifi, TIMER_WIFI)); }
+void wifi_ap_disconnected_cb(wifi_event_ap_stadisconnected_t*) { CHECK_(esp_timer_stop(h_timer_wifi)); }
+
+void ota_update_start_cb() { ble_gap_ext_adv_stop(0); ble_gap_disc_cancel(); }
+void ota_update_end_cb() { host_sync_cb(); }
+
+void ble_scan_complete_cb() { host_sync_cb(); }
+void ble_adv_complete_cb() { if(!sets.patch) { RELAY_2_UNPATCH_IMPL(); } host_sync_cb(); }
 #else
-extern void adv_init(uint8_t = 0, uint16_t = HID_SVC, uint32_t = TIME_ADV_UNITS, bool legacy = true);
+extern void adv_init(uint8_t = 0, uint16_t = HID_SVC, uint32_t = TIME_ADV_MS, bool legacy = true);
+void host_sync_cb() { adv_init(); }
 void ota_update_start_cb() { ble_gap_ext_adv_stop(0); esp_wifi_set_ps(WIFI_PS_NONE); portYIELD();/*reconfigure_task_wdt(30);*/ } 
 void ota_update_end_cb() { nimble_event_put(); esp_wifi_set_ps(WIFI_PS_MAX_MODEM);/*reconfigure_task_wdt(CONFIG_ESP_TASK_WDT_TIMEOUT_S);*/ }
 int get_wifi_rssi() { int r; if(!esp_wifi_sta_get_rssi(&r)) { return r; } return -1; }
@@ -159,6 +180,8 @@ void sntp_setup();
 void check_distance_by_rssi();
 handle_mask_t tracked_conn_mask = 0;
 #endif
+void ble_connect_cb(int status) { nimble_event_put(); }
+void ble_disconnect_cb(uint16_t handle) { nimble_event_put(); }
 
 extern esp_err_t http_server_init();
 void restart_request() { xTaskNotify(h_main_task, RESTART, eSetValueWithOverwrite); }
@@ -166,11 +189,8 @@ void patch_request_cb() { patch_timer(); }
 esp_err_t wifi_timer_restart(uint32_t ms) { return esp_timer_start(h_timer_wifi, ms*1000); }
 
 void ble_device_name_set();
-void wifi_hostname_set();
+void wifi_hostname_set(esp_mac_type_t);
 int ble_delete_all_bonds();
-void ble_connect_cb(int status) { nimble_event_put(); }
-void ble_disconnect_cb(uint16_t handle) { nimble_event_put(); }
-
 
 size_t strtoB(const char* str, uint8_t* buf, size_t buf_len);
 template <bool = false, char = 0> int bytes_to_str(const uint8_t* src, char* dest, size_t data_size);

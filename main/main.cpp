@@ -38,9 +38,7 @@ extern "C" void app_main() { {
    	gpio_config_t conf = { (BIT(PIN_RELAY) | RELAY_2_MASK | PIN_LED_MASK), GPIO_MODE_RELAY_IMPL }; //LED ON on c3 super mini
 	ESP_ERROR_CHECK(gpio_config(&conf));
 	gpio_set_drive_capability((gpio_num_t)PIN_RELAY, DRIVE_CAP_IMPL);
-#ifndef CONFIG_DOMOPHONE
-	if(_noinit.ota) { wifi_init(); }
-#else
+#ifdef CONFIG_DOMOPHONE
   	wifi_init(); sntp_setup();
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM); //listen_interval 3
 #endif
@@ -81,9 +79,7 @@ void mainTask(void *) {
 			//ESP_LOGI(TAG, "reboot to FACTORY...");//esp_restart(); break;
 		//case VALID: esp_ota_mark_app_valid_cancel_rollback(); break;
 #ifdef CONFIG_DOMOPHONE
-		case ACCESS_BLE:
-			check_distance_by_rssi();
-			break;
+		//case ACCESS_BLE: check_distance_by_rssi(); break;
 		case EXIT_BUTTION: ESP_LOGI(TAG, "BUTTION");
 		 	patch_timer(TIMER_PATCH_BUTTON);
 			delay(200);
@@ -94,7 +90,7 @@ void mainTask(void *) {
 		case DEBUG_LED_OFF:
 			if(DEBUG_LED_GET()) { DEBUG_LED(0x0); }
 			break;
-		case RESTART: ESP_LOGI(TAG, "RESTART"); delay(100); esp_restart(); break;
+		case RESTART: ESP_LOGI(TAG, "RESTART"); delay(10); esp_restart(); break;
 		case NOTIFY_TIME: break;
 		default: //if(wifi_is_connected()) { if(!esp_wifi_sta_get_rssi(&rssi)) { esp_rom_printf("rssi: %d\n", rssi); } } generate_pin(); 
 			break;
@@ -112,9 +108,9 @@ void isr_handler() {
 		dWrite(PIN_RELAY, now);
 	}
 	else if(need_notify_io()) { xTaskNotifyFromISR(h_main_task, NOTIFY_IO, eSetValueWithOverwrite, NULL); };
-#if PIN_LED_MASK
-	dWrite(PIN_LED, now);
-#endif
+	#if PIN_LED_MASK
+		dWrite(PIN_LED, now);
+	#endif
 #endif
 }
 #else
@@ -132,7 +128,9 @@ void bluetooth_init() {
 	nimble_host_config_init();
 	ble_svc_gap_init();
 	gatt_init();
+#ifndef CONFIG_DOMOPHONE
 	nimble_event_register([](void *ev) { adv_init(); }, NULL);
+#endif
 	h_nimble_task = xTaskCreateStaticPinnedToCore([](void*){ nimble_port_run(); vTaskDelete(h_nimble_task); },
 	"nimble", sizeof(xHostStack), NULL, (configMAX_PRIORITIES - 4), xHostStack, &xHostTaskBuffer, NIMBLE_CORE);
 	CHECK_VOID(ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_CODED_MASK, BLE_GAP_LE_PHY_CODED_MASK));
@@ -145,12 +143,13 @@ void wifi_init() {
 	}, NULL, ESP_TIMER_ISR);
 	ESP_ERROR_CHECK_WITHOUT_ABORT(esp_timer_start_once(h_timer_wifi, TIMER_WIFI)); 
 	ESP_LOGD(TAG,"TIMER_WIFI ms %lu", uint32_t(TIMER_WIFI / 1000));
-	set_scan_periods(BLE_GAP_SCAN_ITVL_MS(120), BLE_GAP_SCAN_WIN_MS(40));
+	scan_interval = BLE_GAP_SCAN_ITVL_MS(120); scan_window = BLE_GAP_SCAN_WIN_MS(40);
 	ESP_ERROR_CHECK(wifi_init_ap(AP_SSID, AP_PASS));
+	wifi_hostname_set(ESP_MAC_WIFI_SOFTAP);
 #else
-	ESP_ERROR_CHECK(wifi_init_sta(STA_SSID, STA_PASS)); 
+	ESP_ERROR_CHECK(wifi_init_sta(STA_SSID, STA_PASS));
+	wifi_hostname_set(ESP_MAC_WIFI_STA);
 #endif
-	wifi_hostname_set();
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(http_server_init());
 #if defined(DEBUG_ENABLE) && defined(CONFIG_DOMOPHONE)
@@ -214,10 +213,14 @@ void nvs_sets_read() {
 			if(sets.patch) { ESP_LOGI(TAG, "PATCH_ON"); patch_timer();  }
 			else { RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); ESP_LOGI(TAG, "PATCH_OFF"); };
 			return;
-	} else { 
-		ESP_LOGE(TAG, ERROR_STR(ret)); 
+	} else {
+		if(ret == ESP_ERR_NVS_NOT_FOUND) {
+			ESP_LOGW(TAG, "NVS_NOT_FOUND");
+		} else {
+			ESP_LOGE(TAG, ERROR_STR(ret));
+		}
 		sets = {};//nvs_sets_write(nvs);
-	} //0x1102 ESP_ERR_NVS_NOT_FOUND
+	}
 }
 
 sets_noinit read_noinit() {
@@ -228,9 +231,9 @@ sets_noinit read_noinit() {
 #ifdef CONFIG_DOMOPHONE
 		noinit.rssi = MIN_RSSI_PATCH_DEFAULT
 #endif
-	}; noinit.crc = crc_impl(noinit);
+		}; noinit.crc = crc_impl(noinit);
 	ESP_LOGW(TAG, "!noinit crc");
-};
+	}
 	return noinit;
 }
 
@@ -307,16 +310,9 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 	const uint8_t *data = event->data, len = event->length_data;
 	if(len == scan_key_len && !memcmp(data, scan_key, scan_key_len)) {
 		ESP_LOGW(TAG, "PASS!");
-#ifndef CONFIG_DOMOPHONE
 		RELAY_2_PATCH_IMPL();
 		ble_gap_disc_cancel();
 		adv_init();
-#else
-		RELAY_PATCH_IMPL();
-		if(!(event->props & BLE_HCI_ADV_LEGACY_MASK)) {
-			adv_init();
-		}
-#endif
 	}
 	/* if(type == COMPLETE_NAME  || type == SHORT_NAME ) {
 		if ((len - 1 == size) && !memcmp(data +1, scan_key, size)) {
@@ -325,11 +321,6 @@ void parse_adv_cb(const struct ble_gap_ext_disc_desc* event) {
 		}
 	} *///else if (type == UUID32_DATA && len == 9 && *(uint32_t*)(&data[++i]) == ...) { *(uint32_t*)(&data[i+=4])  }
 #endif
-}
-
-void host_sync_cb() {
-	adv_init();
-	//ble_scan_init();//set_random_addr();
 }
 
 int parse_rx_data_cb(const struct ble_gap_event* event) {
@@ -359,14 +350,13 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 	}
 	uint8_t val = buf->om_data[4];
 	switch (val) {
-	case OTA_KEY://ESP_ERROR_CHECK(nimble_port_stop());
-		write_noinit_ota(1);
+	case OTA_KEY:
+		wifi_init(); //write_noinit_ota(1);
 		//set_boot_partition(ESP_PARTITION_SUBTYPE_APP_FACTORY);
-		ESP_LOGI(TAG, "reboot to FACTORY...");
+		break;
 	case RESTART_KEY: esp_restart();
 		break;
-	case MAIN_KEY: write_noinit_ota(0);
-		break;
+	//case MAIN_KEY: write_noinit_ota(0); break;
 	case VALID_KEY: ota_rollback_revoke();
 		break;
 	case SAVE_BOND: return save_bonding(event->notify_rx.conn_handle);
@@ -377,7 +367,7 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 		break;
 	case NVS_ERASE_ALL: nvsEraseAll(nullptr);
 		break;
-	//case NVS_ERASE_ALL_EXC: nvsEraseAll("phy"); break;
+	case NVS_ERASE_ALL_EXC: nvsEraseAll("nimble_bond"); break;
 	case BLE_STORE_CLEAR: ble_delete_all_bonds();
 		break;
 	case OFFSET: print_task_list(); break;
@@ -400,21 +390,21 @@ int parse_rx_data_cb(const struct ble_gap_event* event) {
 	return 0;
 }
 
-void patch_timer(uint64_t period) { 
+void patch_timer(uint64_t period_us) { 
 #ifndef CONFIG_DOMOPHONE
-	if(!sets.patch) { sets.patch = true; 
-		nvs_sets_write(); 
+	if(!sets.patch) { sets.patch = true;
+		//nvs_sets_write();
 	}
 #endif
-	if(period) { 
+	if(period_us) {
 		RELAY_PATCH_IMPL(); RELAY_2_PATCH_IMPL(); 
-		CHECK_VOID(esp_timer_start(h_timer_patch, period));
+		CHECK_VOID(esp_timer_start(h_timer_patch, period_us));
 		DEBUG_LED(0x00'00'FF);
 	}
 	else { 
-		RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL(); 
-		esp_timer_stop(h_timer_patch); 
-		DEBUG_LED(0); 
+		RELAY_UNPATCH_IMPL(); RELAY_2_UNPATCH_IMPL();
+		esp_timer_stop(h_timer_patch);
+		DEBUG_LED(0);
 	}
 	if(need_notify_io()) { send_io_notify(); }
 }
@@ -463,8 +453,8 @@ void check_distance_by_rssi() {
 #endif
 
 void ble_conn_encrypted_cb(uint16_t handle) {
-	nimble_event_put();
-#ifdef CONFIG_DOMOPHONE
+	nimble_event_put(); 
+#if defined(CONFIG_DOMOPHONE) && defined(changed)
 	int8_t rssi;
 	CHECK_VOID(ble_gap_conn_rssi(handle, &rssi)); 
 	if (rssi >= noinit.rssi) {
@@ -491,13 +481,12 @@ std::unique_ptr<char[]> task_list(size_t* out_len) {
 	char* str = ptr.get(); if(!str) return ptr;//931205
 	vTaskList(str); 
 	size_t i = strlen(str);
-	strcpy(&str[i],"\n\n"); i += 2;
+	strcpy(&str[i],"\n"); i += 1;
 #if configGENERATE_RUN_TIME_STATS
 	vTaskGetRunTimeStats(&str[i]); 
-	i += strlen(&str[i]); 
-	strcpy(&str[i],"\n"); i += 1;
+	i += strlen(&str[i]);
 #endif
-	i += sprintf(&str[i] , "Heap:");
+	i += sprintf(&str[i] , "\nHeap:");
 	i += heap_caps_sprint_heap_info(&str[i]);
 	uint64_t seconds = micros() / 1000000;
     size_t days = seconds / (60*60*24);
@@ -511,24 +500,23 @@ std::unique_ptr<char[]> task_list(size_t* out_len) {
 
 void ble_device_name_set() {
 	static_assert(!MYNEWT_VAL_BLE_STATIC_TO_DYNAMIC); static_assert(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH >=15);
-	constexpr int name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; //static_assert(name_len >= 7);
-	char* name = const_cast<char*>(ble_svc_gap_device_name());
+	constexpr size_t name_len = sizeof(MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME)-1; //static_assert(name_len >= 7);
+	char* name = const_cast<char*>(ble_svc_gap_device_name()); uint8_t mac[8];
 	*(name + name_len) = '-';
-	uint8_t mac[8]; CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
+	CHECK_VOID(esp_read_mac(mac, ESP_MAC_BT));
 	//bytes_to_str<true, 0>(name+1, mac + 3, 3); //621263
-	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]); //621165
+	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3], mac[4], mac[5]); //621165
 	size_t len = strlen(name);
 	name[MYNEWT_VAL_BLE_SVC_GAP_DEVICE_NAME_MAX_LENGTH] = len;
 	ESP_LOGI(TAG, "gap_device_name: %.*s len: %u", len, name, len);
 }
 
-void wifi_hostname_set() {
-	const int name_len = sizeof(WIFI_HOSTNAME) - 1;
-	char name[32] = WIFI_HOSTNAME; uint8_t mac[8];
+void wifi_hostname_set(esp_mac_type_t type) {
+	char name[32] = WIFI_HOSTNAME; uint8_t mac[8]; constexpr size_t name_len = sizeof(WIFI_HOSTNAME) - 1;
 	name[name_len] = '-';
-	CHECK_VOID(esp_read_mac(mac, ESP_MAC_WIFI_STA));
-	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3],mac[4],mac[5]);
-	esp_netif_set_hostname(h_netif_sta, name); // LWIP_LOCAL_HOSTNAME
+	CHECK_VOID(esp_read_mac(mac, type));
+	sprintf(name + name_len + 1,"%02X%02X%02X", mac[3], mac[4], mac[5]);
+	esp_netif_set_hostname(type == ESP_MAC_WIFI_STA ? h_netif_sta : h_netif_ap, name); // LWIP_LOCAL_HOSTNAME
 	const char* new_name = NULL; esp_netif_get_hostname(h_netif_sta, &new_name);
 	if(new_name) { ESP_LOGD(TAG, "hostname: %s", new_name); }
 }
@@ -599,17 +587,19 @@ void sntp_setup() {
 #endif
 
 uint32_t generate_pin() {
-	static uint32_t prev_time = __UINT32_MAX__;
+	static uint32_t prev_time = __INT32_MAX__;
 	static uint32_t pincode;
 	time_t now = time(NULL);
 	//uint32_t rem = now % TOTP_TIMESTEP;
-	if(now - prev_time >= TOTP_TIMESTEP) {
+	uint32_t res = (unsigned)now - prev_time;
+	if(res >= TOTP_TIMESTEP) {
 		prev_time = now;
 		pincode = TOTPget(pass_key, pass_key_len, now);
 		ESP_LOGI(TAG, "NEW PIN: %lu Time: %lu", pincode, now);
-	}DEBUG_PIN();
+	}
+	//DEBUG_PIN();
 #ifndef DEBUG_ENABLE 
-	return pincode; 
+	return pincode;
 #else
 	return 111111;
 #endif
@@ -705,11 +695,10 @@ int base32_encode(const uint8_t *data, size_t length, char *result, size_t encod
 }
 
 void nvsEraseAll(const char *except) {
-	esp_err_t ret; nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
-	ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
-	while (ret == ESP_OK) {
+	nvs_entry_info_t entry; nvs_iterator_t it = NULL; 
+	for (esp_err_t ret = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);!ret;) {
 		nvs_entry_info(it, &entry); // Can omit error check if parameters are guaranteed to be non-NULL
-		ESP_LOGI(TAG, "space '%s'\tkey '%s'\ttype '%d'\n", entry.namespace_name, entry.key, entry.type);
+		ESP_LOGI(TAG, "space '%s'\tkey '%s' type 0x%u", entry.namespace_name, entry.key, entry.type);
 		nvsApi nvs; //types: blob 66, str 33
 		if(nvs.begin(entry.namespace_name, NVS_READWRITE) == ESP_OK) {
 			//if(*reinterpret_cast<uint32_t*>(entry.namespace_name) != *reinterpret_cast<const uint32_t*>("phy"))
@@ -721,7 +710,7 @@ void nvsEraseAll(const char *except) {
 	}
 	nvs_release_iterator(it);
 }
-extern "C" const char* format_addr(const uint8_t *addr);
+
 size_t sprint_bond_data(char* buf, size_t idx) {
 	extern ble_store_t ble_store_peer_secs[MYNEWT_VAL(BLE_STORE_MAX_BONDS)];
 	extern size_t ble_store_num_peer_secs;
